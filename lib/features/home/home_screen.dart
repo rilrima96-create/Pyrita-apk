@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 
 import '../../core/api_client.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets/py_app_icon.dart';
+import '../../shared/widgets/py_button.dart';
+import '../../shared/widgets/py_card.dart';
+import '../../shared/widgets/py_flag.dart';
+import '../../shared/widgets/py_pulse.dart';
+import '../../shared/widgets/py_tab_bar.dart';
 
-/// Главный экран — Connect/Disconnect toggle + статус подписки.
+/// Главный экран — sonar hero + Connect/Disconnect.
 ///
 /// **Phase A mockup**: connection state — локальный, не туннелирует.
-/// Кнопка просто переключает visual-state «Connected/Disconnected»
-/// плюс fake-stats. Phase C добавит реальный VpnService binding к
-/// sing-box-core.
+/// Phase C добавит реальный VpnService binding к sing-box-core.
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -20,10 +23,8 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  bool _connected = false;
-  bool _busy = false;
+  ConnState _state = ConnState.active;
   Map<String, dynamic>? _me;
-  String? _meError;
 
   @override
   void initState() {
@@ -39,41 +40,35 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     } on ApiException catch (e) {
       if (!mounted) return;
       if (e.statusCode == 401) {
-        // Сессия истекла — на login
-        context.go("/login");
+        context.go('/login');
         return;
       }
-      setState(() => _meError = e.message);
+      // Молча — экран должен работать в offline preview-режиме.
     }
   }
 
-  Future<void> _toggleConnect() async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    // Фейк-задержка имитирует handshake. Phase C заменит на реальный
-    // VpnService.startService() через MethodChannel.
-    await Future.delayed(const Duration(milliseconds: 800));
-    if (!mounted) return;
-    setState(() {
-      _connected = !_connected;
-      _busy = false;
-    });
+  Future<void> _toggle() async {
+    if (_state == ConnState.connecting) {
+      setState(() => _state = ConnState.idle);
+      return;
+    }
+    if (_state == ConnState.idle) {
+      setState(() => _state = ConnState.connecting);
+      await Future.delayed(const Duration(milliseconds: 1200));
+      if (!mounted) return;
+      setState(() => _state = ConnState.active);
+      return;
+    }
+    setState(() => _state = ConnState.idle);
   }
 
-  /// Показываем «Оформить/Продлить» если:
-  ///   * нет данных пока — false (карточка ещё crunch'ает)
-  ///   * status = expired — да (срочно)
-  ///   * status = trial — да (юзер может купить заранее)
-  ///   * status = paid но days_left <= 7 — да (early renewal nudge)
-  ///   * status = paid и days_left > 7 — нет (не нужно его задёргивать)
-  bool _shouldShowRenewCta() {
-    if (_me == null) return false;
-    final status = _me!["subscription_status"];
+  bool get _expiringSoon {
+    final status = _me?['subscription_status'];
     if (status is! Map) return false;
-    final kind = status["kind"] as String?;
-    if (kind == "expired" || kind == "trial") return true;
-    if (kind == "paid") {
-      final daysLeft = status["days_left"] as int?;
+    final kind = status['kind'] as String?;
+    if (kind == 'expired') return true;
+    if (kind == 'paid') {
+      final daysLeft = status['days_left'] as int?;
       return daysLeft != null && daysLeft <= 7;
     }
     return false;
@@ -81,290 +76,516 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final tt = Theme.of(context).textTheme;
-
     return Scaffold(
-      backgroundColor: PyritaColors.obsidian,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: Text("Pyrita", style: tt.titleLarge),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            color: PyritaColors.paper70,
-            onPressed: () => context.push("/settings"),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(PyritaSpacing.xl),
+      backgroundColor: PyDS.bg,
+      body: DecoratedBox(
+        decoration: const BoxDecoration(gradient: PyDS.gradBg),
+        child: SafeArea(
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Subscription status card
-              _SubscriptionCard(me: _me, error: _meError),
-              const SizedBox(height: PyritaSpacing.md),
-
-              // Subscribe / Renew CTA — показывается если status != paid,
-              // или если paid но осталось < 7 дней (early-renew nudge).
-              if (_shouldShowRenewCta()) _RenewButton(status: _me!["subscription_status"]),
-
-              const SizedBox(height: PyritaSpacing.xl),
-
-              // Connect button — center stage
+              _HomeTopBar(onAccount: () => context.go('/account')),
               Expanded(
-                child: Center(
-                  child: _ConnectButton(
-                    connected: _connected,
-                    busy: _busy,
-                    onTap: _toggleConnect,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    PyPulse(size: 232, state: _state),
+                    const SizedBox(height: PyDS.sp3),
+                    _StatusBlock(state: _state),
+                  ],
+                ),
+              ),
+              if (_expiringSoon)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: PyDS.sp4 + 2,
+                  ),
+                  child: _ExpiringBanner(
+                    onTap: () => context.go('/checkout'),
                   ),
                 ),
-              ),
-
-              // Status text under button
-              Text(
-                _connected
-                    ? "Соединение защищено"
-                    : "Нажмите для подключения",
-                textAlign: TextAlign.center,
-                style: tt.bodyMedium?.copyWith(
-                  color: _connected
-                      ? PyritaColors.success
-                      : PyritaColors.paper55,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  PyDS.sp4 + 2,
+                  PyDS.sp2,
+                  PyDS.sp4 + 2,
+                  PyDS.sp3,
+                ),
+                child: Column(
+                  children: [
+                    const _ServerCard(),
+                    const SizedBox(height: PyDS.sp2 + 2),
+                    _StatRow(state: _state),
+                    const SizedBox(height: PyDS.sp2 + 2),
+                    _ConnectButton(state: _state, onTap: _toggle),
+                  ],
                 ),
               ),
-              const SizedBox(height: PyritaSpacing.xl2),
             ],
           ),
         ),
       ),
+      bottomNavigationBar: const PyTabBar(active: PyTab.home),
     );
   }
 }
 
-class _SubscriptionCard extends StatelessWidget {
-  const _SubscriptionCard({required this.me, required this.error});
+class _HomeTopBar extends StatelessWidget {
+  const _HomeTopBar({required this.onAccount});
 
-  final Map<String, dynamic>? me;
-  final String? error;
+  final VoidCallback onAccount;
 
   @override
   Widget build(BuildContext context) {
-    final tt = Theme.of(context).textTheme;
-
-    if (error != null) {
-      return _card(
-        Row(
-          children: [
-            const Icon(Icons.error_outline,
-                color: PyritaColors.destructive, size: 20),
-            const SizedBox(width: PyritaSpacing.md),
-            Expanded(
-              child: Text(error!,
-                  style: tt.bodySmall?.copyWith(
-                      color: PyritaColors.destructive)),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (me == null) {
-      return _card(
-        const SizedBox(
-          height: 24,
-          child: Center(
-            child: SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: PyritaColors.pyrite500,
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    final status = me!["subscription_status"] as Map?;
-    final kind = status?["kind"] as String?;
-    final daysLeft = status?["days_left"] as int?;
-    final expiresAt = status?["expires_at"] as int?;
-
-    String title;
-    String? subtitle;
-    Color accentColor = PyritaColors.pyrite500;
-
-    if (kind == "paid") {
-      title = "Подписка активна";
-      if (daysLeft != null && expiresAt != null) {
-        final date = DateFormat("d MMMM", "ru_RU")
-            .format(DateTime.fromMillisecondsSinceEpoch(expiresAt));
-        subtitle = "До $date · $daysLeft ${_dayWord(daysLeft)}";
-      }
-    } else if (kind == "trial") {
-      title = "Пробный период";
-      if (daysLeft != null && expiresAt != null) {
-        final date = DateFormat("d MMMM", "ru_RU")
-            .format(DateTime.fromMillisecondsSinceEpoch(expiresAt));
-        subtitle = "До $date · $daysLeft ${_dayWord(daysLeft)}";
-      }
-    } else {
-      title = "Подписка истекла";
-      subtitle = "Продлите чтобы продолжить";
-      accentColor = PyritaColors.destructive;
-    }
-
-    return _card(
-      Row(
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        PyDS.sp4 + 2,
+        PyDS.sp3,
+        PyDS.sp4 + 2,
+        PyDS.sp3,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: accentColor.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(PyritaSpacing.radiusFull),
-            ),
-            child: Icon(Icons.workspace_premium_outlined,
-                color: accentColor, size: 20),
-          ),
-          const SizedBox(width: PyritaSpacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: tt.titleMedium),
-                if (subtitle != null) ...[
-                  const SizedBox(height: 2),
-                  Text(subtitle, style: tt.bodySmall),
-                ],
-              ],
+          const PyLogo(size: 28),
+          GestureDetector(
+            onTap: onAccount,
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: PyDS.bg2,
+                shape: BoxShape.circle,
+                border: Border.all(color: PyDS.stroke),
+              ),
+              child: const Icon(
+                Icons.person_outline,
+                size: 18,
+                color: PyDS.goldLight,
+              ),
             ),
           ),
         ],
       ),
     );
   }
-
-  Widget _card(Widget child) {
-    return Container(
-      padding: const EdgeInsets.all(PyritaSpacing.lg),
-      decoration: BoxDecoration(
-        color: PyritaColors.obsidian2,
-        border: Border.all(color: PyritaColors.borderSubtle),
-        borderRadius: BorderRadius.circular(PyritaSpacing.radiusLg),
-      ),
-      child: child,
-    );
-  }
-
-  String _dayWord(int days) {
-    // Simple русская плюрализация для «1 день / 2 дня / 5 дней».
-    final mod10 = days % 10;
-    final mod100 = days % 100;
-    if (mod10 == 1 && mod100 != 11) return "день";
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "дня";
-    return "дней";
-  }
 }
 
-/// Renew CTA — outlined button под subscription-card. На тап push'ает
-/// /checkout с plan picker'ом.
-class _RenewButton extends StatelessWidget {
-  const _RenewButton({required this.status});
+class _StatusBlock extends StatelessWidget {
+  const _StatusBlock({required this.state});
 
-  /// `subscription_status` map из /api/me. Используется только для label.
-  final dynamic status;
+  final ConnState state;
 
   @override
   Widget build(BuildContext context) {
-    final kind = status is Map ? status["kind"] as String? : null;
-    final label = kind == "expired"
-        ? "Возобновить подписку"
-        : kind == "paid"
-            ? "Продлить подписку"
-            : "Оформить подписку";
+    final isOn = state == ConnState.active;
+    final isPending = state == ConnState.connecting;
 
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton(
-        onPressed: () => GoRouter.of(context).push("/checkout"),
-        style: OutlinedButton.styleFrom(
-          side: const BorderSide(color: PyritaColors.pyrite500, width: 1.5),
-          foregroundColor: PyritaColors.pyrite300,
-        ),
-        child: Text(label),
+    final chipLabel = isOn
+        ? 'Под защитой'
+        : isPending
+            ? 'Защищаем соединение'
+            : 'Нажмите чтобы подключиться';
+    final dotColor = isOn
+        ? PyDS.on
+        : isPending
+            ? PyDS.warn
+            : PyDS.textFaint;
+    final chipBg = isOn ? const Color(0x1A6BD49A) : PyDS.bg2;
+    final chipBorder = isOn ? const Color(0x526BD49A) : PyDS.stroke;
+    final chipColor = isOn ? PyDS.on : PyDS.textMute;
+
+    final title = isOn
+        ? 'Интернет работает'
+        : isPending
+            ? 'Подключаемся'
+            : 'Готов к подключению';
+    final subtitle = isOn
+        ? 'Сайты и звонки работают как обычно'
+        : isPending
+            ? 'Это займёт пару секунд'
+            : 'Один тап — и трафик защищён';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 10,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: chipBg,
+              borderRadius: BorderRadius.circular(PyDS.rPill),
+              border: Border.all(color: chipBorder),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: dotColor,
+                    shape: BoxShape.circle,
+                    boxShadow: isOn
+                        ? [
+                            BoxShadow(
+                              color: dotColor.withValues(alpha: 0.8),
+                              blurRadius: 8,
+                            ),
+                          ]
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  chipLabel.toUpperCase(),
+                  style: PyDS.font(
+                    size: 10.5,
+                    weight: FontWeight.w600,
+                    letterSpacing: 0.6,
+                    color: chipColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: PyDS.sp3 - 2),
+          isOn
+              ? PyTextGold(
+                  text: title,
+                  textAlign: TextAlign.center,
+                  style: PyDS.font(
+                    size: 26,
+                    weight: FontWeight.w800,
+                    letterSpacing: -0.65,
+                    height: 1.1,
+                  ),
+                )
+              : Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: PyDS.font(
+                    size: 26,
+                    weight: FontWeight.w800,
+                    letterSpacing: -0.65,
+                    height: 1.1,
+                    color: PyDS.text,
+                  ),
+                ),
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: PyDS.font(
+              size: 12.5,
+              weight: FontWeight.w500,
+              height: 1.4,
+              color: PyDS.textSoft,
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-/// Connect/Disconnect — большая круглая кнопка с pulsing animation
-/// когда connected. Mock-визуал; реальный VPN-tunnel в Phase C.
-class _ConnectButton extends StatelessWidget {
-  const _ConnectButton({
-    required this.connected,
-    required this.busy,
-    required this.onTap,
+class _ServerCard extends StatelessWidget {
+  const _ServerCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return PyCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: PyDS.sp4 + 2,
+        vertical: PyDS.sp3 + 2,
+      ),
+      child: Row(
+        children: [
+          const PyFlag(code: 'NL', size: 36),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'СЕРВЕР',
+                  style: PyDS.font(
+                    size: 10,
+                    weight: FontWeight.w600,
+                    letterSpacing: 0.4,
+                    color: PyDS.textFaint,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                RichText(
+                  text: TextSpan(
+                    style: PyDS.font(
+                      size: 15,
+                      weight: FontWeight.w700,
+                      color: PyDS.text,
+                    ),
+                    children: [
+                      const TextSpan(text: 'Амстердам '),
+                      TextSpan(
+                        text: '· NL',
+                        style: PyDS.font(
+                          size: 15,
+                          weight: FontWeight.w500,
+                          color: PyDS.textSoft,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: PyDS.on,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: PyDS.on.withValues(alpha: 0.6),
+                          blurRadius: 8,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '24',
+                    style: PyDS.font(
+                      size: 13,
+                      weight: FontWeight.w700,
+                      color: PyDS.on,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  Text(
+                    'MS',
+                    style: PyDS.font(
+                      size: 10,
+                      weight: FontWeight.w600,
+                      letterSpacing: 0.4,
+                      color: PyDS.textFaint,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              const Icon(
+                Icons.chevron_right,
+                size: 14,
+                color: PyDS.textFaint,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatRow extends StatelessWidget {
+  const _StatRow({required this.state});
+
+  final ConnState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final on = state == ConnState.active;
+    return Row(
+      children: [
+        Expanded(
+          child: _StatTile(
+            icon: Icons.keyboard_arrow_down_rounded,
+            label: 'Загрузка',
+            value: on ? '142.8' : '0.0',
+            unit: 'Mb/s',
+          ),
+        ),
+        const SizedBox(width: PyDS.sp2),
+        Expanded(
+          child: _StatTile(
+            icon: Icons.keyboard_arrow_up_rounded,
+            label: 'Отдача',
+            value: on ? '28.4' : '0.0',
+            unit: 'Mb/s',
+          ),
+        ),
+        const SizedBox(width: PyDS.sp2),
+        Expanded(
+          child: _StatTile(
+            icon: Icons.shield_outlined,
+            label: 'Заблокировано',
+            value: on ? '12' : '0',
+            unit: '',
+            color: PyDS.on,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StatTile extends StatelessWidget {
+  const _StatTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.unit,
+    this.color = PyDS.goldLight,
   });
 
-  final bool connected;
-  final bool busy;
+  final IconData icon;
+  final String label;
+  final String value;
+  final String unit;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return PyCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: PyDS.sp3 + 2,
+        vertical: PyDS.sp3,
+      ),
+      radius: PyDS.rMd,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 11, color: PyDS.textFaint),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label.toUpperCase(),
+                  overflow: TextOverflow.ellipsis,
+                  style: PyDS.font(
+                    size: 9.5,
+                    weight: FontWeight.w600,
+                    letterSpacing: 0.4,
+                    color: PyDS.textFaint,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Flexible(
+                child: Text(
+                  value,
+                  overflow: TextOverflow.ellipsis,
+                  style: PyDS.font(
+                    size: 19,
+                    weight: FontWeight.w800,
+                    letterSpacing: -0.4,
+                    color: color,
+                  ),
+                ),
+              ),
+              if (unit.isNotEmpty) ...[
+                const SizedBox(width: 3),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Text(
+                    unit,
+                    style: PyDS.font(
+                      size: 11,
+                      weight: FontWeight.w600,
+                      color: PyDS.textFaint,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConnectButton extends StatelessWidget {
+  const _ConnectButton({required this.state, required this.onTap});
+
+  final ConnState state;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isOn = state == ConnState.active;
+    final isPending = state == ConnState.connecting;
+
+    if (isPending) {
+      return PyButtonGhost(
+        label: 'Отмена',
+        onPressed: onTap,
+        color: PyDS.goldLight,
+      );
+    }
+    if (isOn) {
+      return PyButtonGhost(
+        label: 'Отключить',
+        onPressed: onTap,
+      );
+    }
+    return PyButtonGold(label: 'Подключить', onPressed: onTap, fontSize: 16);
+  }
+}
+
+class _ExpiringBanner extends StatelessWidget {
+  const _ExpiringBanner({required this.onTap});
+
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: busy ? null : onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 280),
-        curve: Curves.easeOut,
-        width: 200,
-        height: 200,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            colors: connected
-                ? [PyritaColors.pyrite500, PyritaColors.pyrite700]
-                : [PyritaColors.obsidian2, PyritaColors.obsidian3],
-          ),
-          border: Border.all(
-            color: connected
-                ? PyritaColors.pyrite500
-                : PyritaColors.borderDefault,
-            width: 2,
-          ),
-          boxShadow: connected
-              ? [
-                  BoxShadow(
-                    color: PyritaColors.pyrite500.withValues(alpha: 0.4),
-                    blurRadius: 48,
-                    spreadRadius: 8,
-                  ),
-                ]
-              : null,
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: PyDS.sp2 + 2),
+        padding: const EdgeInsets.symmetric(
+          horizontal: PyDS.sp4,
+          vertical: PyDS.sp3,
         ),
-        child: Center(
-          child: busy
-              ? const SizedBox(
-                  width: 36,
-                  height: 36,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    color: PyritaColors.pyrite500,
-                  ),
-                )
-              : Icon(
-                  connected ? Icons.shield : Icons.power_settings_new,
-                  size: 64,
-                  color: connected
-                      ? PyritaColors.obsidian
-                      : PyritaColors.paper70,
+        decoration: BoxDecoration(
+          color: PyDS.warn.withValues(alpha: 0.10),
+          border: Border.all(color: PyDS.warn.withValues(alpha: 0.40)),
+          borderRadius: BorderRadius.circular(PyDS.rMd),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.access_time, size: 18, color: PyDS.warn),
+            const SizedBox(width: PyDS.sp2 + 2),
+            Expanded(
+              child: Text(
+                'Подписка скоро истечёт. Продлите чтобы не остаться без сети.',
+                style: PyDS.font(
+                  size: 12.5,
+                  weight: FontWeight.w600,
+                  height: 1.35,
+                  color: PyDS.warn,
                 ),
+              ),
+            ),
+            const Icon(Icons.chevron_right, size: 18, color: PyDS.warn),
+          ],
         ),
       ),
     );

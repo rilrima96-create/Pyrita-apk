@@ -1,19 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api_client.dart';
 import '../../core/auth_storage.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets/py_app_icon.dart';
 
-/// Splash screen — рендерится 1-2 секунды пока:
+/// Splash screen — рендерится 0.6-1.5 сек пока:
 ///   1. Читаем session-cookie из secure storage
 ///   2. Если есть — пробуем GET /api/me чтобы проверить что сессия живая
 ///   3. Если живая → редирект на /home; если нет → /login
-///
-/// Если сети нет (offline) — даём 1.5s grace period и идём на /login
-/// (нельзя коннектиться без auth — но юзер хотя бы видит UI).
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 
@@ -29,8 +26,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   }
 
   Future<void> _bootstrap() async {
-    // Минимальная задержка чтобы splash не мигнул на быстром старте.
-    // 600ms — достаточно чтобы юзер увидел brand-mark.
     final minDelay = Future.delayed(const Duration(milliseconds: 600));
 
     final cookie = await AuthStorage.getSessionCookie();
@@ -41,8 +36,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         await ApiClient.instance.getMe();
         authed = true;
       } on ApiException {
-        // 401 / network → юзер не аутентифицирован или offline. Пускаем
-        // на /login где он или войдёт, или увидит ошибку.
         authed = false;
       }
     }
@@ -51,36 +44,44 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     if (!mounted) return;
 
     if (authed) {
-      context.go("/home");
+      context.go('/home');
     } else {
-      context.go("/login");
+      context.go('/login');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: PyritaColors.obsidian,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SvgPicture.asset(
-              "assets/images/logo-mark.svg",
-              width: 88,
-              height: 88,
-            ),
-            const SizedBox(height: PyritaSpacing.lg),
-            Text(
-              "Pyrita",
-              style: Theme.of(context).textTheme.headlineLarge,
-            ),
-            const SizedBox(height: PyritaSpacing.sm),
-            Text(
-              "Стабильный интернет",
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
+      backgroundColor: PyDS.bg,
+      body: DecoratedBox(
+        decoration: const BoxDecoration(gradient: PyDS.gradBg),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              PyAppIcon(size: 88, animated: true),
+              const SizedBox(height: PyDS.sp4),
+              Text(
+                'Pyrita',
+                style: PyDS.font(
+                  size: 32,
+                  weight: FontWeight.w800,
+                  letterSpacing: -0.8,
+                  color: PyDS.text,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Стабильный интернет',
+                style: PyDS.font(
+                  size: 13,
+                  weight: FontWeight.w500,
+                  color: PyDS.textSoft,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
