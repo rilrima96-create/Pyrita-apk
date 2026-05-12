@@ -1,0 +1,70 @@
+name: pyrita_app
+description: "Pyrita — приватный клиент VPN-сервиса с одним нажатием."
+publish_to: "none"
+
+# package versioning: <semantic>+<build>
+# Bump <build> (целое число) каждый Android-release — Play и RuStore
+# отказывают APK'у с тем же versionCode что уже опубликован.
+version: 0.0.1+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management. Riverpod 2.x — type-safe, без BuildContext-зависимости
+  # в логике, хорошо тестируется. Альтернатива — Bloc, но он verbose'нее.
+  flutter_riverpod: ^2.5.1
+
+  # Routing. go_router — официальный Flutter router, deep-links works,
+  # declarative-config. Альтернатива — auto_route, но он code-gen-heavy.
+  go_router: ^14.0.0
+
+  # HTTP client. Dio — modern, interceptors, типизация лучше чем http.
+  dio: ^5.4.0
+
+  # Secure storage для auth-token / refresh-token. Под капотом:
+  # Android Keystore + iOS Keychain. Дороже чем shared_preferences, но
+  # безопаснее для creds.
+  flutter_secure_storage: ^9.2.0
+
+  # Non-sensitive preferences (theme, last-server). Простой shared_preferences.
+  shared_preferences: ^2.2.0
+
+  # SVG assets — logo-mark/lockup лежат в assets/images/ как SVG.
+  flutter_svg: ^2.0.0
+
+  # System fonts integration — Manrope + JetBrains Mono. Download-on-demand
+  # с Google Fonts CDN — экономит APK size но требует первого online-старта.
+  # Для offline-first можно заменить на bundled .ttf — TODO для Phase D.
+  google_fonts: ^6.2.0
+
+  # Date/time formatting на русский — ru_RU locale.
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  # Default Flutter lints — strict, помогает держать стиль.
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+
+  # Fonts из Google Fonts подтянутся в runtime. Если решим bundle'ить
+  # .ttf — раскомментировать и положить файлы в assets/fonts/.
+  # fonts:
+  #   - family: Manrope
+  #     fonts:
+  #       - asset: assets/fonts/Manrope-Regular.ttf
+  #       - asset: assets/fonts/Manrope-SemiBold.ttf
+  #         weight: 600
+  #       - asset: assets/fonts/Manrope-Bold.ttf
+  #         weight: 700
