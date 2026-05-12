@@ -45,6 +45,11 @@ dependencies:
   # Date/time formatting на русский — ru_RU locale.
   intl: ^0.19.0
 
+  # Url launcher — открывает CryptoCloud pay-page в Chrome Custom Tab
+  # (или Safari Tab на iOS позже). Лучше чем WebView — нативный UI,
+  # cookies сохраняются, юзер видит лочный padlock-icon.
+  url_launcher: ^6.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

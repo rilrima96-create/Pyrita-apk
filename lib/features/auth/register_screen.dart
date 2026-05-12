@@ -1,37 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api_client.dart';
-import '../../core/auth_storage.dart';
 import '../../core/theme.dart';
 
-class LoginScreen extends ConsumerStatefulWidget {
-  const LoginScreen({super.key});
+class RegisterScreen extends ConsumerStatefulWidget {
+  const RegisterScreen({super.key});
 
   @override
-  ConsumerState<LoginScreen> createState() => _LoginScreenState();
+  ConsumerState<RegisterScreen> createState() => _RegisterScreenState();
 }
 
-class _LoginScreenState extends ConsumerState<LoginScreen> {
+class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _loading = false;
   bool _passwordVisible = false;
+  bool _accept = false;
   String? _errorMsg;
-
-  @override
-  void initState() {
-    super.initState();
-    // Pre-fill last logged-in email — небольшое удобство для re-open'а.
-    AuthStorage.getCachedEmail().then((email) {
-      if (email != null && mounted) {
-        setState(() => _emailCtrl.text = email);
-      }
-    });
-  }
 
   @override
   void dispose() {
@@ -44,10 +32,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (_loading) return;
     setState(() => _errorMsg = null);
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (!_accept) {
+      setState(() => _errorMsg = "Необходимо согласиться с условиями");
+      return;
+    }
 
     setState(() => _loading = true);
     try {
-      await ApiClient.instance.login(
+      await ApiClient.instance.register(
         email: _emailCtrl.text.trim(),
         password: _passwordCtrl.text,
       );
@@ -68,31 +60,51 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     return Scaffold(
       backgroundColor: PyritaColors.obsidian,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          color: PyritaColors.paper70,
+          onPressed: () => context.go("/login"),
+        ),
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(
             horizontal: PyritaSpacing.xl,
-            vertical: PyritaSpacing.xl3,
+            vertical: PyritaSpacing.lg,
           ),
           child: Form(
             key: _formKey,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(height: PyritaSpacing.xl2),
                 Text(
-                  "PYRITA · ВХОД",
+                  "PYRITA · РЕГИСТРАЦИЯ",
                   style: tt.labelSmall?.copyWith(color: PyritaColors.pyrite500),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: PyritaSpacing.md),
                 Text(
-                  "Войдите в аккаунт",
+                  "Создайте аккаунт",
                   style: tt.headlineLarge,
                   textAlign: TextAlign.center,
                 ),
+                const SizedBox(height: PyritaSpacing.md),
+                Text(
+                  "14 дней бесплатно. Карта не нужна.",
+                  style: tt.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
                 const SizedBox(height: PyritaSpacing.xl2),
-                _CardContainer(
+                Container(
+                  padding: const EdgeInsets.all(PyritaSpacing.xl),
+                  decoration: BoxDecoration(
+                    color: PyritaColors.obsidian2,
+                    border: Border.all(color: PyritaColors.borderSubtle),
+                    borderRadius:
+                        BorderRadius.circular(PyritaSpacing.radiusLg),
+                  ),
                   child: Column(
                     children: [
                       // Email
@@ -101,7 +113,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         keyboardType: TextInputType.emailAddress,
                         autocorrect: false,
                         textInputAction: TextInputAction.next,
-                        autofillHints: const [AutofillHints.email],
+                        autofillHints: const [AutofillHints.newUsername],
                         decoration: const InputDecoration(
                           labelText: "Email",
                           hintText: "you@example.com",
@@ -117,16 +129,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         },
                       ),
                       const SizedBox(height: PyritaSpacing.lg),
+
                       // Password
                       TextFormField(
                         controller: _passwordCtrl,
                         obscureText: !_passwordVisible,
-                        autofillHints: const [AutofillHints.password],
+                        autofillHints: const [AutofillHints.newPassword],
                         textInputAction: TextInputAction.done,
                         onFieldSubmitted: (_) => _submit(),
                         decoration: InputDecoration(
                           labelText: "Пароль",
-                          hintText: "Ваш пароль",
+                          hintText: "Минимум 8 символов",
                           suffixIcon: IconButton(
                             icon: Icon(
                               _passwordVisible
@@ -141,11 +154,42 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                         validator: (v) {
                           if (v == null || v.isEmpty) return "Введите пароль";
+                          if (v.length < 8) {
+                            return "Не менее 8 символов";
+                          }
                           return null;
                         },
                       ),
+
+                      const SizedBox(height: PyritaSpacing.lg),
+
+                      // Accept terms
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Checkbox(
+                            value: _accept,
+                            onChanged: (v) => setState(() => _accept = v ?? false),
+                            activeColor: PyritaColors.pyrite500,
+                            checkColor: PyritaColors.obsidian,
+                          ),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () => setState(() => _accept = !_accept),
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 12),
+                                child: Text(
+                                  "Принимаю оферту и политику конфиденциальности",
+                                  style: tt.bodySmall,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+
                       if (_errorMsg != null) ...[
-                        const SizedBox(height: PyritaSpacing.lg),
+                        const SizedBox(height: PyritaSpacing.md),
                         Container(
                           padding: const EdgeInsets.all(PyritaSpacing.md),
                           decoration: BoxDecoration(
@@ -164,31 +208,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           ),
                         ),
                       ],
+
                       const SizedBox(height: PyritaSpacing.xl),
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
                           onPressed: _loading ? null : _submit,
-                          child: Text(_loading ? "Входим…" : "Войти"),
-                        ),
-                      ),
-                      const SizedBox(height: PyritaSpacing.md),
-                      TextButton(
-                        onPressed: () async {
-                          // Открываем web-flow для reset'а — там реальная
-                          // форма + email-валидация. В app пока in-app
-                          // reset-flow не делаем (это лишний UX-шаг и
-                          // дублирование). Phase D можно добавить native.
-                          final uri = Uri.parse(
-                              "https://pyrita.com/forgot-password");
-                          await launchUrl(uri,
-                              mode: LaunchMode.externalApplication);
-                        },
-                        child: Text(
-                          "Забыли пароль?",
-                          style: tt.bodySmall?.copyWith(
-                            color: PyritaColors.paper55,
-                          ),
+                          child: Text(_loading ? "Создаём…" : "Создать аккаунт"),
                         ),
                       ),
                     ],
@@ -199,11 +225,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   child: Wrap(
                     alignment: WrapAlignment.center,
                     children: [
-                      Text("Нет аккаунта? ", style: tt.bodySmall),
+                      Text("Уже есть аккаунт? ", style: tt.bodySmall),
                       GestureDetector(
-                        onTap: () => context.go("/register"),
+                        onTap: () => context.go("/login"),
                         child: Text(
-                          "Создать",
+                          "Войти",
                           style: tt.bodySmall?.copyWith(
                             color: PyritaColors.pyrite500,
                             fontWeight: FontWeight.w600,
@@ -218,25 +244,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// Карточка в стиле dashboard'а (obsidian-2 surface + subtle border).
-class _CardContainer extends StatelessWidget {
-  const _CardContainer({required this.child});
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(PyritaSpacing.xl),
-      decoration: BoxDecoration(
-        color: PyritaColors.obsidian2,
-        border: Border.all(color: PyritaColors.borderSubtle),
-        borderRadius: BorderRadius.circular(PyritaSpacing.radiusLg),
-      ),
-      child: child,
     );
   }
 }

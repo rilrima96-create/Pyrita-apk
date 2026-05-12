@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import 'core/theme.dart';
 import 'features/auth/login_screen.dart';
+import 'features/auth/register_screen.dart';
+import 'features/checkout/checkout_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/settings/settings_screen.dart';
 import 'features/splash/splash_screen.dart';
@@ -44,8 +46,16 @@ final _routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const LoginScreen(),
       ),
       GoRoute(
+        path: "/register",
+        builder: (context, state) => const RegisterScreen(),
+      ),
+      GoRoute(
         path: "/home",
         builder: (context, state) => const HomeScreen(),
+      ),
+      GoRoute(
+        path: "/checkout",
+        builder: (context, state) => const CheckoutScreen(),
       ),
       GoRoute(
         path: "/settings",

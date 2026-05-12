@@ -60,6 +60,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     });
   }
 
+  /// Показываем «Оформить/Продлить» если:
+  ///   * нет данных пока — false (карточка ещё crunch'ает)
+  ///   * status = expired — да (срочно)
+  ///   * status = trial — да (юзер может купить заранее)
+  ///   * status = paid но days_left <= 7 — да (early renewal nudge)
+  ///   * status = paid и days_left > 7 — нет (не нужно его задёргивать)
+  bool _shouldShowRenewCta() {
+    if (_me == null) return false;
+    final status = _me!["subscription_status"];
+    if (status is! Map) return false;
+    final kind = status["kind"] as String?;
+    if (kind == "expired" || kind == "trial") return true;
+    if (kind == "paid") {
+      final daysLeft = status["days_left"] as int?;
+      return daysLeft != null && daysLeft <= 7;
+    }
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
@@ -86,7 +105,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             children: [
               // Subscription status card
               _SubscriptionCard(me: _me, error: _meError),
-              const SizedBox(height: PyritaSpacing.xl2),
+              const SizedBox(height: PyritaSpacing.md),
+
+              // Subscribe / Renew CTA — показывается если status != paid,
+              // или если paid но осталось < 7 дней (early-renew nudge).
+              if (_shouldShowRenewCta()) _RenewButton(status: _me!["subscription_status"]),
+
+              const SizedBox(height: PyritaSpacing.xl),
 
               // Connect button — center stage
               Expanded(
@@ -244,6 +269,37 @@ class _SubscriptionCard extends StatelessWidget {
     if (mod10 == 1 && mod100 != 11) return "день";
     if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "дня";
     return "дней";
+  }
+}
+
+/// Renew CTA — outlined button под subscription-card. На тап push'ает
+/// /checkout с plan picker'ом.
+class _RenewButton extends StatelessWidget {
+  const _RenewButton({required this.status});
+
+  /// `subscription_status` map из /api/me. Используется только для label.
+  final dynamic status;
+
+  @override
+  Widget build(BuildContext context) {
+    final kind = status is Map ? status["kind"] as String? : null;
+    final label = kind == "expired"
+        ? "Возобновить подписку"
+        : kind == "paid"
+            ? "Продлить подписку"
+            : "Оформить подписку";
+
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton(
+        onPressed: () => GoRouter.of(context).push("/checkout"),
+        style: OutlinedButton.styleFrom(
+          side: const BorderSide(color: PyritaColors.pyrite500, width: 1.5),
+          foregroundColor: PyritaColors.pyrite300,
+        ),
+        child: Text(label),
+      ),
+    );
   }
 }
 

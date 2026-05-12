@@ -91,6 +91,167 @@ class ApiClient {
     }
     await AuthStorage.clearAll();
   }
+
+  /// POST /api/register. Создаёт юзера + сразу логинит (session-cookie
+  /// в Set-Cookie). `accept` всегда true — экран должен иметь обязательный
+  /// checkbox, без него не отправляем запрос.
+  Future<void> register({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      final res = await _dio.post(
+        "/api/register",
+        data: {"email": email, "password": password, "accept": true},
+        options: Options(headers: {"Content-Type": "application/json"}),
+      );
+      if (res.statusCode == 200) {
+        await AuthStorage.setCachedEmail(email);
+        return;
+      }
+      final body = res.data;
+      final errorMsg =
+          (body is Map && body["error"] is String) ? body["error"] as String : null;
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: errorMsg ?? "Не удалось зарегистрироваться",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  /// POST /api/auth/request-password-reset. Сервер privacy-by-design
+  /// возвращает 200 даже для несуществующих email'ов.
+  Future<void> requestPasswordReset(String email) async {
+    try {
+      await _dio.post(
+        "/api/auth/request-password-reset",
+        data: {"email": email},
+        options: Options(headers: {"Content-Type": "application/json"}),
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  /// PATCH /api/me/newsletter. Включает/выключает рассылки.
+  Future<void> setNewsletterOptIn(bool optIn) async {
+    try {
+      final res = await _dio.patch(
+        "/api/me/newsletter",
+        data: {"opt_in": optIn},
+        options: Options(headers: {"Content-Type": "application/json"}),
+      );
+      if (res.statusCode == 200) return;
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: "Не удалось обновить настройку",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  /// POST /api/auth/resend-confirmation. Re-send confirmation email.
+  /// 409 = already confirmed, 429 = rate-limited.
+  Future<void> resendEmailConfirmation() async {
+    try {
+      final res = await _dio.post("/api/auth/resend-confirmation");
+      if (res.statusCode == 200) return;
+      if (res.statusCode == 409) {
+        throw ApiException(
+          statusCode: 409,
+          message: "Email уже подтверждён",
+        );
+      }
+      if (res.statusCode == 429) {
+        throw ApiException(
+          statusCode: 429,
+          message: "Слишком часто. Попробуйте через минуту.",
+        );
+      }
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: "Не удалось отправить письмо",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  /// POST /api/checkout/create. Создаёт invoice + возвращает redirect URL
+  /// на CryptoCloud pay-page. Caller открывает URL в Chrome Custom Tab.
+  ///
+  /// Если BILLING_ENABLED=0 на сервере → 404. Caller должен handle.
+  Future<({int paymentId, String redirectUrl})> createCheckout(String planId) async {
+    try {
+      final res = await _dio.post(
+        "/api/checkout/create",
+        data: {"plan_id": planId},
+        options: Options(headers: {"Content-Type": "application/json"}),
+      );
+      if (res.statusCode == 404) {
+        throw ApiException(
+          statusCode: 404,
+          message: "Оплата временно недоступна. Попробуйте позже.",
+        );
+      }
+      if (res.statusCode == 200 && res.data is Map) {
+        final m = res.data as Map;
+        final paymentId = m["payment_id"] as int?;
+        final redirectUrl = m["redirect_url"] as String?;
+        if (paymentId != null && redirectUrl != null) {
+          return (paymentId: paymentId, redirectUrl: redirectUrl);
+        }
+      }
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: "Не удалось создать счёт",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  /// DELETE /api/me. Удаляет аккаунт. Идемпотентно (повторный delete на
+  /// уже-удалённый возвращает 200/ok).
+  Future<void> deleteAccount() async {
+    try {
+      final res = await _dio.delete("/api/me");
+      if (res.statusCode == 200) {
+        await AuthStorage.clearAll();
+        return;
+      }
+      final body = res.data;
+      final errorMsg =
+          (body is Map && body["error"] is String) ? body["error"] as String : null;
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: errorMsg ?? "Не удалось удалить аккаунт",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  /// POST /api/me/regenerate-sub. Ротирует subscription token (если юзер
+  /// думает что URL утёк).
+  Future<String> regenerateSubscription() async {
+    try {
+      final res = await _dio.post("/api/me/regenerate-sub");
+      if (res.statusCode == 200 && res.data is Map) {
+        final url = (res.data as Map)["subscription_url"] as String?;
+        if (url != null) return url;
+      }
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: "Не удалось перевыпустить ссылку",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
 }
 
 /// Interceptor — добавляет saved session-cookie в каждый запрос +
