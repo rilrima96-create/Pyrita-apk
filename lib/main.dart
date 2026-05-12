@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'app.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Init Russian locale для intl/DateFormat. Без этого DateFormat("d MMMM",
+  // "ru_RU") бросает LocaleDataException на первом render'е home screen'а
+  // или settings'а где показываем даты подписки.
+  await initializeDateFormatting('ru_RU', null);
 
   // Принудительно portrait — VPN-приложение не нуждается в landscape,
   // плюс упрощает UI testing. Можно убрать когда дойдём до tablet support.
