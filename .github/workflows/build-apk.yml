@@ -1,0 +1,126 @@
+name: Build Android APK
+
+# Триггеры:
+#   * push в main или любую feature-ветку → сборка debug-APK
+#   * tag v*.*.* → сборка release-APK (требует SIGNING_* secrets — см. ниже)
+#   * manual через "Run workflow" в GitHub Actions UI
+
+on:
+  push:
+    branches: ["main", "feature/**"]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+# Если push'ы идут быстро — отменяем in-progress runs одного и того же
+# ref'а (commit'а). Экономит GH Actions минуты.
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-debug:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    # Tag-only runs пропускают debug-build (он строится release-job'ом).
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          # Версия должна матчить pubspec.yaml environment.flutter.
+          # При апгрейде Flutter — обновлять оба места одновременно.
+          flutter-version: "3.41.9"
+          channel: stable
+          cache: true
+
+      - name: Flutter doctor (info)
+        run: flutter doctor -v
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      # `flutter create` нужен для генерации platform-scaffolding (android/
+      # gradle файлы, R-классы etc) если они ещё не закоммичены. Безвредно
+      # если уже есть — flutter create НЕ перезатирает custom changes
+      # в AndroidManifest.xml / MainActivity.kt.
+      - name: Ensure platform scaffolding
+        run: |
+          flutter create . --org com.pyrita --project-name pyrita_app \
+            --platforms android --no-pub --no-overwrite || true
+
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyrita-debug-apk-${{ github.sha }}
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 14
+
+  build-release:
+    name: Build release APK
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.41.9"
+          channel: stable
+          cache: true
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Decode keystore
+        # SIGNING_KEYSTORE_BASE64 — keystore.jks в base64 (создаётся локально:
+        # base64 -i keystore.jks | clip). Хранится в GitHub Secrets.
+        if: ${{ env.SIGNING_KEYSTORE_BASE64 != '' }}
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > android/app/keystore.jks
+          cat > android/key.properties <<EOF
+          storeFile=keystore.jks
+          storePassword=${{ secrets.SIGNING_STORE_PASSWORD }}
+          keyAlias=${{ secrets.SIGNING_KEY_ALIAS }}
+          keyPassword=${{ secrets.SIGNING_KEY_PASSWORD }}
+          EOF
+
+      - name: Ensure platform scaffolding
+        run: |
+          flutter create . --org com.pyrita --project-name pyrita_app \
+            --platforms android --no-pub --no-overwrite || true
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/app/outputs/flutter-apk/app-release.apk
+          fail_on_unmatched_files: true
