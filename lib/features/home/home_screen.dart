@@ -312,7 +312,7 @@ class _ServerCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const PyFlag(code: 'NL', size: 36),
+          const PyFlag(code: 'FI', size: 36),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
@@ -336,9 +336,9 @@ class _ServerCard extends StatelessWidget {
                       color: PyDS.text,
                     ),
                     children: [
-                      const TextSpan(text: 'Амстердам '),
+                      const TextSpan(text: 'Хельсинки '),
                       TextSpan(
-                        text: '· NL',
+                        text: '· FI',
                         style: PyDS.font(
                           size: 15,
                           weight: FontWeight.w500,

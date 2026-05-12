@@ -49,6 +49,12 @@ jobs:
       - name: Pub get
         run: flutter pub get
 
+      # Генерация Android adaptive launcher-иконок из assets/images/icon-b-pyrite.png.
+      # Перезаписывает android/app/src/main/res/mipmap-*/ — должно происходить
+      # ДО `flutter create` чтобы platform-scaffolding не перетёр их.
+      - name: Generate launcher icons
+        run: dart run flutter_launcher_icons
+
       - name: Analyze
         run: flutter analyze
 
@@ -95,6 +101,10 @@ jobs:
 
       - name: Pub get
         run: flutter pub get
+
+      # Тот же шаг что в build-debug — генерируем launcher icons из бренд-PNG.
+      - name: Generate launcher icons
+        run: dart run flutter_launcher_icons
 
       - name: Decode keystore
         # SIGNING_KEYSTORE_BASE64 — keystore.jks в base64 (создаётся локально:

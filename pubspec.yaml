@@ -57,6 +57,22 @@ dev_dependencies:
   # Default Flutter lints — strict, помогает держать стиль.
   flutter_lints: ^4.0.0
 
+  # Генерация Android adaptive launcher-иконок из PNG бренд-пакета.
+  # Запуск: `dart run flutter_launcher_icons` (выполняется в CI шаге).
+  flutter_launcher_icons: ^0.14.4
+
+# Конфиг flutter_launcher_icons. Источник — иконка варианта B (Pyrite)
+# из бренд-пакета. Adaptive icons (Android 8+): foreground = картинка
+# с прозрачным фоном-padding'ом, background = #0C0907 (PyDS.ink).
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/images/icon-b-pyrite.png"
+  min_sdk_android: 24
+  adaptive_icon_background: "#0C0907"
+  adaptive_icon_foreground: "assets/images/icon-b-pyrite.png"
+  remove_alpha_ios: false
+
 flutter:
   uses-material-design: true
 
