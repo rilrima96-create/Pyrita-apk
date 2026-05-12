@@ -2,8 +2,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../../core/theme.dart';
-
 /// Состояние VPN-соединения.
 enum ConnState { idle, connecting, active }
 
