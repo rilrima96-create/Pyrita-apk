@@ -270,7 +270,10 @@ class _AuthCookieInterceptor extends Interceptor {
   }
 
   @override
-  void onResponse(Response response, ResponseInterceptorHandler handler) {
+  Future<void> onResponse(
+    Response response,
+    ResponseInterceptorHandler handler,
+  ) async {
     final setCookie = response.headers["set-cookie"];
     if (setCookie != null && setCookie.isNotEmpty) {
       // iron-session ставит cookie вида `pyrita_session=...; Path=/; HttpOnly; ...`
@@ -278,7 +281,10 @@ class _AuthCookieInterceptor extends Interceptor {
       // Берём первую cookie из списка — у нас только одна session-cookie.
       final first = setCookie.first;
       final nameValue = first.split(";").first.trim();
-      AuthStorage.setSessionCookie(nameValue);
+      // ВАЖНО: await — без него race condition. Если юзер быстро шлёт второй
+      // запрос (login → getMe), interceptor может ещё не сохранить cookie
+      // → второй запрос идёт без auth → 401 → юзера выкидывает на login.
+      await AuthStorage.setSessionCookie(nameValue);
     }
     handler.next(response);
   }

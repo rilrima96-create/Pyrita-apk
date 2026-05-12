@@ -248,12 +248,11 @@ class _ProfileSection extends StatelessWidget {
     final tt = Theme.of(context).textTheme;
     final email = me["email"] as String;
     final confirmed = me["email_confirmed_at"] != null;
-    final trialEndsAt = me["trial_ends_at"] as int?;
+    final createdAt = me["created_at"] as int?;
     final status = me["subscription_status"] as Map?;
 
-    final createdDate = trialEndsAt != null
-        ? DateTime.fromMillisecondsSinceEpoch(trialEndsAt)
-            .subtract(const Duration(days: 14))
+    final createdDate = createdAt != null
+        ? DateTime.fromMillisecondsSinceEpoch(createdAt)
         : null;
 
     final planLabel = _planLabel(status);
