@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -48,6 +49,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _toggle() async {
+    // Tactile feedback — лёгкий "тык" при переключении.
+    HapticFeedback.lightImpact();
+
     if (_state == ConnState.connecting) {
       setState(() => _state = ConnState.idle);
       return;
@@ -57,6 +61,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       await Future.delayed(const Duration(milliseconds: 1200));
       if (!mounted) return;
       setState(() => _state = ConnState.active);
+      // Чуть более ощутимая отдача при успешном connect.
+      HapticFeedback.mediumImpact();
       return;
     }
     setState(() => _state = ConnState.idle);
@@ -88,7 +94,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    PyPulse(size: 232, state: _state),
+                    _PulseTapTarget(
+                      onTap: _toggle,
+                      child: PyPulse(size: 232, state: _state),
+                    ),
                     const SizedBox(height: PyDS.sp3),
                     _StatusBlock(state: _state),
                   ],
@@ -587,6 +596,40 @@ class _ExpiringBanner extends StatelessWidget {
             const Icon(Icons.chevron_right, size: 18, color: PyDS.warn),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Press-target вокруг sonar-анимации. Делает её tappable с лёгким scale-press
+/// эффектом. Hit-зона круглая (clip), чтобы пропускать тапы по углам
+/// квадратного bounding box'а.
+class _PulseTapTarget extends StatefulWidget {
+  const _PulseTapTarget({required this.child, required this.onTap});
+
+  final Widget child;
+  final VoidCallback onTap;
+
+  @override
+  State<_PulseTapTarget> createState() => _PulseTapTargetState();
+}
+
+class _PulseTapTargetState extends State<_PulseTapTarget> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: widget.onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedScale(
+        scale: _pressed ? 0.96 : 1.0,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        child: widget.child,
       ),
     );
   }
