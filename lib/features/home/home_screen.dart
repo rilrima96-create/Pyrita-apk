@@ -226,7 +226,7 @@ class _SubscriptionCard extends StatelessWidget {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: accentColor.withOpacity(0.15),
+              color: accentColor.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(PyritaSpacing.radiusFull),
             ),
             child: Icon(Icons.workspace_premium_outlined,
@@ -318,7 +318,6 @@ class _ConnectButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tt = Theme.of(context).textTheme;
     return GestureDetector(
       onTap: busy ? null : onTap,
       child: AnimatedContainer(
@@ -342,7 +341,7 @@ class _ConnectButton extends StatelessWidget {
           boxShadow: connected
               ? [
                   BoxShadow(
-                    color: PyritaColors.pyrite500.withOpacity(0.4),
+                    color: PyritaColors.pyrite500.withValues(alpha: 0.4),
                     blurRadius: 48,
                     spreadRadius: 8,
                   ),

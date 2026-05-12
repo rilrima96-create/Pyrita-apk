@@ -193,9 +193,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         Container(
                           padding: const EdgeInsets.all(PyritaSpacing.md),
                           decoration: BoxDecoration(
-                            color: PyritaColors.destructive.withOpacity(0.1),
+                            color: PyritaColors.destructive.withValues(alpha: 0.1),
                             border: Border.all(
-                              color: PyritaColors.destructive.withOpacity(0.4),
+                              color: PyritaColors.destructive.withValues(alpha: 0.4),
                             ),
                             borderRadius:
                                 BorderRadius.circular(PyritaSpacing.radiusMd),

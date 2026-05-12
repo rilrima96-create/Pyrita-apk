@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/api_client.dart';
-import '../../core/auth_storage.dart';
 import '../../core/theme.dart';
 
 /// Settings — полный LK. Состоит из секций:
@@ -220,7 +219,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   foregroundColor: PyritaColors.destructive,
                                   side: BorderSide(
                                     color: PyritaColors.destructive
-                                        .withOpacity(0.4),
+                                        .withValues(alpha: 0.4),
                                   ),
                                 ),
                                 child: const Text("Удалить навсегда"),
@@ -459,7 +458,7 @@ class _NewsletterSectionState extends State<_NewsletterSection> {
           SwitchListTile.adaptive(
             value: _optIn,
             onChanged: _busy ? null : _toggle,
-            activeColor: PyritaColors.pyrite500,
+            activeThumbColor: PyritaColors.pyrite500,
             contentPadding: EdgeInsets.zero,
             title: Text(
               "Email о тех. работах и важных новостях",
