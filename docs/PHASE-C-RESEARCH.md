@@ -1,85 +1,160 @@
-# Phase C research — sing-box-core integration на Flutter Android
+# Phase C research — VPN-engine integration на Flutter Android
 
 **Цель**: реальный VPN-tunnel на Connect-кнопке (сейчас mockup в `home_screen.dart`).
 
-## Главное открытие 2026-05-12
+---
 
-**Не нужно писать gomobile-bindings с нуля.** Существует ≥3 готовых open-source Flutter-пакетов, обёртывающих sing-box-core через Android VpnService:
+## КРИТИЧЕСКОЕ ОТКРЫТИЕ 2026-05-13 — license audit
 
-| Package | Pros | Cons | Status |
+**sing-box (Go core от SagerNet) — GPL-3.0.**
+
+Любой Flutter-пакет который статически линкует sing-box, заставляет наш app
+тоже стать GPL-3.0 (copyleft propagation). Это противоречит ограничению в
+плане a-b2-nifty-haven: «Не fork Hiddify-Next — пишем поверх MIT/Apache
+библиотек».
+
+### Аудит pub.dev пакетов (2026-05-13)
+
+| Пакет | Wrapper license | Engine license | Combined verdict |
 |---|---|---|---|
-| **[singbox_mm](https://pub.dev/packages/singbox_mm)** | «Thin VPN shell», routing presets, anti-throttling config builder, notification wiring готов | Молодой (~ один автор), нужен audit | Активный |
-| **[flutter_sing_box](https://pub.dev/packages/flutter_sing_box)** | Profile import, Clash API, full VPN service mgmt, Android + iOS | iOS тоже включён (но нам пока не нужен) | Активный |
-| **[sing_box](https://pub.dev/packages/sing_box/versions)** | Stats monitoring, bypass rules, DNS config | Меньше docs | Активный |
+| `flutter_sing_box` v1.0.12 | GPL-3.0 (явно) | GPL-3.0 (sing-box) | ❌ GPL |
+| `singbox_mm` v0.1.9 | MIT | GPL-3.0 (sing-box) | ❌ GPL (combined) |
+| `sing_box` v0.0.1 | Unknown | GPL-3.0 (libbox) | ❌ Не использовать |
+| `VPNclient-engine-flutter` | GPL-3.0 | GPL-3.0 (Xray+WG) | ❌ GPL |
+| **`flutter_v2ray_client` v3.2.0** | **MIT** ✓ | **Xray MPL-2.0** ✓ | **✓ ИСПОЛЬЗУЕМ** |
+| `v2ray_box` (latest) | MIT | Xray MPL-2.0 / sing-box GPL (dual, opt-in) | ✓ Backup (Xray-only mode) |
 
-И ещё есть [VPNclient-engine-flutter](https://github.com/VPNclient/VPNclient-engine-flutter/blob/master/SINGBOX_INTEGRATION.md) — open-source VPN-client от которого можно учиться integration patterns.
+### MPL-2.0 vs GPL — почему это OK
 
-## Выбор для Phase C
+**MPL-2.0** (Mozilla Public License) — file-level copyleft. Модификации
+самого Xray-core должны быть MPL-2.0, но наш application code, который
+использует Xray через MethodChannel/JNI binding, остаётся under нашей
+лицензией (MIT / proprietary — на выбор).
 
-Сравним вживую при начале работы. Текущий **leaning** — `flutter_sing_box` потому что:
-- Поддержка `Clash API` — стандарт для VPN-stats observability
-- Android + iOS из коробки (когда iOS добавим)
-- Profile import — сразу подходит к нашему flow (юзер не вводит config вручную, мы fetcheм sub URL c api.pyrita.com)
+**GPL-3.0** — work-level copyleft. Любая программа линкующая GPL-код
+становится GPL-3.0 целиком, включая весь наш Dart-код.
 
-Альтернативно — `singbox_mm` если он более минималистичный и легче integrate'ится.
-
-## Что нужно сделать
-
-1. **Audit пакета** перед production-use:
-   - Прочитать source code (Dart + Kotlin/Java)
-   - Проверить permissions в их AndroidManifest (не запрашивает ли больше нужного)
-   - Проверить licensing — должен быть MIT/Apache/BSD (НЕ GPL — заразит наш код)
-   - Проверить размер APK с пакетом
-
-2. **Wire в наш Home screen**:
-   ```dart
-   final singBox = FlutterSingBox.instance;
-   
-   Future<void> _connect() async {
-     final me = await ApiClient.instance.getMe();
-     final subUrl = me["subscription_url"] as String;
-     // sing-box fetcheт config напрямую с нашего endpoint'а
-     await singBox.importProfileFromUrl(subUrl);
-     await singBox.start();
-   }
-   ```
-
-3. **State management**: подключение/отключение через Riverpod `StreamProvider<VpnState>`, кнопка реагирует на real state.
-
-4. **Background lifecycle**:
-   - Android 14+ требует `foregroundServiceType="systemExempted"` для VPN
-   - POST_NOTIFICATIONS permission запросить при первом connect'е
-   - Persistent notification обязателен (notification.shown:true в VpnService)
-
-5. **DNS / split-tunnel**:
-   - sing-box JSON config от api.pyrita.com уже имеет routing rules (geosite-ru bypass)
-   - Просто передаём как есть, sing-box применяет
-
-6. **Auto-reconnect** при network change (WiFi ↔ 4G):
-   - `connectivity_plus` package на изменение sub'аем
-   - Re-start sing-box если соединение ломалось
-
-## Risks / unknowns
-
-1. **Размер APK** с sing-box embedded ~25-40 MB. Это нормально для VPN-app'а, но прирост из текущих ~10 MB.
-2. **Compatibility** Android 7+ — sing-box-core supports, должно работать.
-3. **Battery drain** в background-mode. sing-box optimized но протоколы вроде Hysteria 2 на UDP poll'ят активнее VLESS-Reality. Если будут жалобы — переключать на VLESS-only.
-4. **Multiple VPN apps**: Android разрешает только один active VPN-tunnel. Если у юзера Hiddify тоже подключён — Pyrita попросит permission revoke. UX-screen «отключите другой VPN» нужен.
-
-## Time estimate
-
-С готовым пакетом — Phase C сокращается с моих исходных 4-6 недель до **~1-2 недель**:
-- Day 1-3: audit пакета + минимальный integration
-- Day 4-7: state-management + UI states (connecting/connected/error)
-- Day 8-10: stats display (Mbps вверх/вниз, traffic per protocol)
-- Day 11-14: edge cases (multiple-VPN, no-network, battery-optimization conflicts)
-
-## Open questions
-
-1. Какой пакет выбрать (нужен audit и пробный integration)?
-2. Нужны ли нам stats UI в Phase C, или это Phase D?
-3. Auto-reconnect — Phase C must-have или later?
+Для friends-only distribution это всё равно нерелевантно (никто не
+требует source), но для будущей commercialization (Stage 6 плана
+`steady-churning-cray`) GPL заблокирует продажу.
 
 ---
 
-При начале Phase C — пройтись по этим пунктам подробнее, audit нескольких пакетов параллельно, выбрать.
+## Выбор движка: Xray-core (MPL-2.0)
+
+### Pros
+- License-clean: app остаётся под нашим выбором лицензии
+- Поддерживает VLESS, VLESS+Reality, VLESS+XHTTP **нативно** (Xray —
+  upstream Reality, изобретение проекта)
+- В новых версиях Xray (26.x) также есть Hysteria 2, UDPhop, обфускация
+  (per release notes `flutter_v2ray_client` v3.2.0 / Xray v26.4.17)
+- 4 ABI: arm64-v8a, armeabi-v7a, x86, x86_64 (Pyrita прицеливается на
+  arm64-v8a + armeabi-v7a; x86 для эмулятора)
+
+### Cons
+- TUIC v5: НЕ в vanilla Xray (нативное решение sing-box). Если нужен в
+  Pyrita-app — отдельный embed `tuic-client` (MIT), либо отказ от TUIC
+  в Phase C, оставляем только в subscription URL для Hiddify-юзеров.
+- Shadowsocks 2022: native Xray поддерживает SS, но AEAD-2022 vairantы
+  под вопросом. Проверить в момент integration.
+
+### Pyrita protocol matrix после Phase C
+
+| Протокол | Pyrita-app native | Subscription URL (Hiddify et al) |
+|---|---|---|
+| VLESS Reality | ✅ Xray | ✅ |
+| VLESS XHTTP | ✅ Xray | ✅ |
+| Hysteria 2 | ✅ Xray v26+ | ✅ |
+| TUIC v5 | ❌ Phase D | ✅ |
+| SS-2022 | ⚠️ TBD на audit'е | ✅ |
+
+В UI Account → Protocols бейдж «АКТИВЕН» будет правда работать только
+для VLESS Reality + XHTTP в Phase C; остальные останутся «ДОСТУПЕН» для
+других клиентов. В Phase D можем расширить.
+
+---
+
+## Выбор Flutter-wrapper'а: `flutter_v2ray_client` (amir-zr)
+
+### Pros
+
+- **License: MIT** (wrapper), Xray binary под MPL-2.0
+- **Verified publisher**: `amirzr.dev` (pub.dev verified badge)
+- **Активный**: v3.2.0 опубликован 17 дней назад, embeds Xray v26.4.17
+- **441 weekly downloads** — есть user base
+- **9 likes, 150 pub points** — мало для большого проекта, но нормально
+  для нишевого VPN-плагина
+- **API focus**: V2Ray Proxy + VPN Mode + live status updates
+  (connection state, speeds, traffic, duration), sharing-link parsing
+- **35 commits** — small but focused codebase, легче audit'ить
+
+### Cons
+
+- **Один maintainer** — bus factor 1. Mitigation: vendor код на known-good
+  версии, fork если abandon
+- **iOS использует Xray 25.12.2 + HevSocks5Tunnel 5.14.1** — старее
+  Android'ной версии (нам пока не нужен iOS, but worth noting)
+- **Windows/Linux/macOS использует Sing Box 1.12.10** — GPL! Но для
+  Pyrita-app мы Android-only в Phase C → этот binary не bundled, safe.
+- **APK size impact** не задокументирован — ожидаем +20-30 МБ к текущим
+  53 МБ (= ~75 МБ release APK). Mitigation: ABI splits в build-apk.yml,
+  отдельные APK для arm64-v8a / armeabi-v7a (на ~50% меньше каждый).
+
+### Backup: `v2ray_box`
+
+Если flutter_v2ray_client отвалится по какой-то причине (баг, заброс),
+переключаемся на `v2ray_box` в Xray-only mode (документация явно
+описывает: keep `libxray.aar`, remove `libsingbox.so`).
+
+---
+
+## Что делаем в Phase C (Etap 4)
+
+См. `~/.claude/plans/c-phase-vpn-integration.md` — детальный план для
+следующей сессии. Краткий summary этапов:
+
+1. **4.1 (3-4 ч)** — Final audit + pubspec.yaml import + sample-app тест
+2. **4.2 (1 день)** — Android scaffolding + MethodChannel boilerplate
+3. **4.3 (2-3 дня)** — PyritaVpnService + permission flow + state EventChannel
+4. **4.4 (1-2 дня)** — home_screen wiring (sub URL fetch → start tunnel)
+5. **4.5 (1-2 дня)** — Real-time state UI (Mbps stats, server card live ping)
+
+Итого ~5-9 рабочих дней, по реалистичному темпу 1-2 недели.
+
+---
+
+## Risks / Open questions
+
+1. **TUIC v5 fate**: Phase C сразу или отложить в Phase D? Для friends — VLESS
+   primary, TUIC nice-to-have. Решение: **отложить, оставить «НЕ
+   ПОДДЕРЖИВАЕТСЯ ВСТРОЕННЫМ КЛИЕНТОМ» в Account → Protocols**, рендерим
+   честно.
+
+2. **SS-2022 AEAD support в Xray**: уточнить в momento integration. Если
+   нет — same approach как с TUIC.
+
+3. **APK size budget**: 53 МБ → 75-85 МБ. Ниже Play Store cap (500 МБ
+   AAB) но выше friendly download size. Mitigation: ABI splits в CI.
+
+4. **Auto-reconnect** при network change (WiFi ↔ 4G): connectivity_plus
+   listener → restart tunnel. **Phase C must-have** (без этого VPN
+   ломается на каждом lifecycle).
+
+5. **Multiple VPN apps на устройстве**: если у юзера Hiddify подключён —
+   Android запретит Pyrita взять VpnService. UX-экран «Отключите
+   Hiddify» нужен в `_PulseTapTarget` press handler'е.
+
+---
+
+## Open decisions для пользователя
+
+Перед стартом Phase C нужны ответы:
+
+1. **TUIC + SS-2022 в Phase C или Phase D?** (рекомендую D)
+2. **iOS targeting когда?** (не сейчас — но влияет на выбор wrapper'а
+   если когда-то)
+3. **ABI splits**: один универсальный APK (~85 МБ) или per-arch (по
+   ~45 МБ)? RuStore универсальный не любит, friends-distribution через
+   pyrita.com → можем делать оба.
+4. **Бюджет на Phase C**: реалистично 1-2 недели sequential work. Делать
+   подряд или с гейтом на каждом 4.X для verify?
