@@ -252,6 +252,243 @@ class ApiClient {
       throw ApiException.fromDio(e);
     }
   }
+
+  /// GET /api/me/referral. Реферальный код юзера + статистика приведённых.
+  /// Код lazy-генерируется на сервере при первом запросе — стабильный после.
+  Future<ReferralData> getReferral() async {
+    try {
+      final res = await _dio.get("/api/me/referral");
+      if (res.statusCode == 200 && res.data is Map) {
+        return ReferralData.fromJson(Map<String, dynamic>.from(res.data as Map));
+      }
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: "Не удалось загрузить реферальную программу",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  /// GET /api/me/devices. Список устройств юзера + лимит (для counter «3/5»).
+  Future<DeviceListResult> getDevices() async {
+    try {
+      final res = await _dio.get("/api/me/devices");
+      if (res.statusCode == 200 && res.data is Map) {
+        final m = Map<String, dynamic>.from(res.data as Map);
+        final raw = m['devices'];
+        final devices = raw is List
+            ? raw
+                .whereType<Map>()
+                .map((e) => DeviceSession.fromJson(Map<String, dynamic>.from(e)))
+                .toList()
+            : <DeviceSession>[];
+        final limit = (m['limit'] as num?)?.toInt() ?? 5;
+        return DeviceListResult(devices: devices, limit: limit);
+      }
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: "Не удалось загрузить устройства",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  /// DELETE /api/me/devices?id=<n>. «Забыть» устройство из списка.
+  Future<void> forgetDevice(int id) async {
+    try {
+      final res = await _dio.delete("/api/me/devices", queryParameters: {"id": id});
+      if (res.statusCode == 200) return;
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: "Не удалось забыть устройство",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  /// GET /api/me/stats. Usage статистика юзера: трафик (Marzban), часы
+  /// онлайн (Phase C), заблокированные угрозы (Phase C). null-значения
+  /// — нормально, Account показывает «—».
+  Future<UsageStats> getStats() async {
+    try {
+      final res = await _dio.get("/api/me/stats");
+      if (res.statusCode == 200 && res.data is Map) {
+        return UsageStats.fromJson(
+            Map<String, dynamic>.from(res.data as Map));
+      }
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: "Не удалось загрузить статистику",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  /// GET /api/me/payments. История последних successful payments юзера.
+  /// Возвращает до 10 записей, отсортированных по paid_at DESC. Pending/
+  /// failed/expired/refunded не возвращаются — серверная фильтрация.
+  Future<List<PaymentRecord>> getPayments() async {
+    try {
+      final res = await _dio.get("/api/me/payments");
+      if (res.statusCode == 200 && res.data is Map) {
+        final raw = (res.data as Map)["payments"];
+        if (raw is! List) return const [];
+        return raw
+            .whereType<Map>()
+            .map((m) => PaymentRecord.fromJson(Map<String, dynamic>.from(m)))
+            .toList();
+      }
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: "Не удалось загрузить историю платежей",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+}
+
+/// Usage stats juzera для Account-экрана. Поля nullable — backend может
+/// вернуть null когда данные ещё не собраны (Phase C для online/threats)
+/// или Marzban лежит. Flutter рендерит null как «—».
+class UsageStats {
+  const UsageStats({
+    this.trafficUsedGb,
+    this.trafficLimitGb,
+    this.onlineHours,
+    this.threatsBlocked,
+  });
+
+  final double? trafficUsedGb;
+
+  /// null = безлимит (или Marzban не вернул). UI показывает «без лимита».
+  final double? trafficLimitGb;
+
+  /// TODO Phase C: sing-box stats. Сейчас всегда null.
+  final int? onlineHours;
+
+  /// TODO Phase C: sing-box geosite:category-ads-all counter. Сейчас null.
+  final int? threatsBlocked;
+
+  factory UsageStats.fromJson(Map<String, dynamic> m) => UsageStats(
+        trafficUsedGb: (m['traffic_used_gb'] as num?)?.toDouble(),
+        trafficLimitGb: (m['traffic_limit_gb'] as num?)?.toDouble(),
+        onlineHours: (m['online_hours'] as num?)?.toInt(),
+        threatsBlocked: (m['threats_blocked'] as num?)?.toInt(),
+      );
+}
+
+/// Реферальная программа: код юзера + публичный URL + статистика.
+class ReferralData {
+  const ReferralData({
+    required this.code,
+    required this.url,
+    required this.invited,
+    required this.paid,
+    required this.daysEarned,
+  });
+
+  /// 8-character stable код. Генерится lazy backend'ом, после remembered.
+  final String code;
+
+  /// Готовый URL для шеринга: `pyrita.com/r/<code>`.
+  final String url;
+
+  /// Сколько юзеров пришло по этому коду (включая trial-only, ни разу не платили).
+  final int invited;
+
+  /// Сколько из приглашённых хотя бы раз оплатили.
+  final int paid;
+
+  /// Сколько бонусных дней начислено на текущий момент.
+  final int daysEarned;
+
+  factory ReferralData.fromJson(Map<String, dynamic> m) {
+    final stats = (m['stats'] as Map?) ?? const {};
+    return ReferralData(
+      code: m['code'] as String,
+      url: m['url'] as String,
+      invited: (stats['invited'] as num?)?.toInt() ?? 0,
+      paid: (stats['paid'] as num?)?.toInt() ?? 0,
+      daysEarned: (stats['days_earned'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+/// Информация об одном клиентском устройстве юзера (Pyrita-app, Hiddify, etc).
+/// UPSERT'ится backend'ом на каждом /api/me и /api/sub/<token> request'е.
+class DeviceSession {
+  const DeviceSession({
+    required this.id,
+    required this.label,
+    required this.lastSeenAt,
+    required this.firstSeenAt,
+  });
+
+  final int id;
+
+  /// Human-readable строка от parseUserAgentLabel на сервере.
+  /// null = не удалось распарсить UA (показать «Неизвестное» в UI).
+  final String? label;
+
+  /// Unix ms последнего request'а с этого устройства.
+  final int lastSeenAt;
+
+  /// Unix ms первого появления — для FuturePhaseC tooltip («впервые …»).
+  final int firstSeenAt;
+
+  factory DeviceSession.fromJson(Map<String, dynamic> m) => DeviceSession(
+        id: (m['id'] as num).toInt(),
+        label: m['label'] as String?,
+        lastSeenAt: (m['last_seen_at'] as num).toInt(),
+        firstSeenAt: (m['first_seen_at'] as num).toInt(),
+      );
+}
+
+/// Результат `getDevices()` — список + лимит (для counter «3 / 5» в UI).
+class DeviceListResult {
+  const DeviceListResult({required this.devices, required this.limit});
+  final List<DeviceSession> devices;
+  final int limit;
+}
+
+/// История одной успешной оплаты — рендерится в Account → «История платежей».
+///
+/// `id` намеренно не передаётся с backend'а — это enumeration-vector
+/// (юзер с двумя оплатами видел бы как растёт общий counter платежей
+/// между его покупками). UI-key строится по `paidAt` (unique-per-user
+/// до микросекунд).
+class PaymentRecord {
+  const PaymentRecord({
+    required this.planId,
+    required this.amountRub,
+    required this.paidAt,
+    this.daysGranted,
+  });
+
+  /// '1m' / '3m' / '6m' / '12m' — для маппинга в человеческое название.
+  final String planId;
+
+  /// Сумма в рублях (целое — копеек нет в текущей тарифной сетке).
+  final int amountRub;
+
+  /// Unix ms когда подтвердилась оплата.
+  final int paidAt;
+
+  /// На сколько дней продлили подписку. NULL если ещё не finalize'ено,
+  /// но getPayments() возвращает только paid → на практике всегда != null.
+  final int? daysGranted;
+
+  factory PaymentRecord.fromJson(Map<String, dynamic> m) => PaymentRecord(
+        planId: m['plan_id'] as String,
+        amountRub: (m['amount_rub'] as num).toInt(),
+        paidAt: (m['paid_at'] as num).toInt(),
+        daysGranted: (m['days_granted'] as num?)?.toInt(),
+      );
 }
 
 /// Interceptor — добавляет saved session-cookie в каждый запрос +

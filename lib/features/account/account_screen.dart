@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/api_client.dart';
 import '../../core/theme.dart';
@@ -26,10 +27,26 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   Map<String, dynamic>? _me;
   String _protocol = 'WireGuard';
 
+  /// `null` пока грузим; `[]` после загрузки если оплат не было.
+  List<PaymentRecord>? _payments;
+
+  /// `null` пока грузим. Поля внутри тоже nullable (см. UsageStats).
+  UsageStats? _stats;
+
+  /// `null` пока грузим. limit/devices внутри.
+  DeviceListResult? _deviceList;
+
+  /// `null` пока грузим.
+  ReferralData? _referral;
+
   @override
   void initState() {
     super.initState();
     _loadMe();
+    _loadPayments();
+    _loadStats();
+    _loadDevices();
+    _loadReferral();
   }
 
   Future<void> _loadMe() async {
@@ -41,6 +58,62 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
       if (!mounted) return;
       if (e.statusCode == 401) {
         context.go('/login');
+      }
+    }
+  }
+
+  Future<void> _loadPayments() async {
+    try {
+      final p = await ApiClient.instance.getPayments();
+      if (!mounted) return;
+      setState(() => _payments = p);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      // 401 уже обработает _loadMe(); тут просто оставляем _payments=null
+      // → UI покажет skeleton-плейсхолдер.
+      if (e.statusCode != 401) {
+        // Логируем, но не падаем — Account-экран должен работать даже если
+        // payments-endpoint лежит.
+        debugPrint('Failed to load payments: ${e.message}');
+      }
+    }
+  }
+
+  Future<void> _loadStats() async {
+    try {
+      final s = await ApiClient.instance.getStats();
+      if (!mounted) return;
+      setState(() => _stats = s);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.statusCode != 401) {
+        debugPrint('Failed to load stats: ${e.message}');
+      }
+    }
+  }
+
+  Future<void> _loadDevices() async {
+    try {
+      final d = await ApiClient.instance.getDevices();
+      if (!mounted) return;
+      setState(() => _deviceList = d);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.statusCode != 401) {
+        debugPrint('Failed to load devices: ${e.message}');
+      }
+    }
+  }
+
+  Future<void> _loadReferral() async {
+    try {
+      final r = await ApiClient.instance.getReferral();
+      if (!mounted) return;
+      setState(() => _referral = r);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.statusCode != 401) {
+        debugPrint('Failed to load referral: ${e.message}');
       }
     }
   }
@@ -129,75 +202,26 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                     ),
                     const _SectionTitle('Использование'),
                     Padding(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
-                      child: Row(
-                        children: const [
-                          Expanded(
-                            child: _BigStatCard(
-                              label: 'Трафик',
-                              value: '84.2',
-                              unit: 'GB',
-                              hint: 'из 256 GB',
-                              pct: 0.32,
-                            ),
-                          ),
-                          SizedBox(width: PyDS.sp2),
-                          Expanded(
-                            child: _BigStatCard(
-                              label: 'Онлайн',
-                              value: '142',
-                              unit: 'ч',
-                              hint: 'в этом мес.',
-                              pct: 0.68,
-                              color: PyDS.on,
-                            ),
-                          ),
-                          SizedBox(width: PyDS.sp2),
-                          Expanded(
-                            child: _BigStatCard(
-                              label: 'Угроз',
-                              value: '1284',
-                              unit: '',
-                              hint: 'заблокировано',
-                              pct: 0.50,
-                            ),
-                          ),
-                        ],
-                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: PyDS.sp4 + 2),
+                      child: _UsageRow(stats: _stats),
                     ),
-                    const _SectionTitle('Устройства', trailing: '3 / 5'),
+                    _SectionTitle(
+                      'Устройства',
+                      trailing: _deviceList != null
+                          ? '${_deviceList!.devices.length} / ${_deviceList!.limit}'
+                          : null,
+                    ),
                     Padding(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
-                      child: Column(
-                        children: const [
-                          _DeviceRow(
-                            icon: Icons.smartphone_outlined,
-                            name: 'Pixel 9 (это устройство)',
-                            subtitle: 'сейчас',
-                            active: true,
-                          ),
-                          SizedBox(height: PyDS.sp2),
-                          _DeviceRow(
-                            icon: Icons.laptop_mac_outlined,
-                            name: 'MacBook Pro 14″',
-                            subtitle: '2 ч назад',
-                          ),
-                          SizedBox(height: PyDS.sp2),
-                          _DeviceRow(
-                            icon: Icons.public,
-                            name: 'Chrome · Windows',
-                            subtitle: 'вчера',
-                          ),
-                        ],
-                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: PyDS.sp4 + 2),
+                      child: _DevicesList(list: _deviceList),
                     ),
                     const SizedBox(height: PyDS.sp4 + 2),
                     Padding(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
-                      child: _ReferralCard(code: 'pyrita.com/r/ARTEM-77'),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: PyDS.sp4 + 2),
+                      child: _ReferralCard(data: _referral),
                     ),
                     const _SectionTitle('Протокол'),
                     Padding(
@@ -236,32 +260,11 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                         onRegenerated: _loadMe,
                       ),
                     ),
-                    const _SectionTitle(
-                      'История платежей',
-                      trailing: 'Все →',
-                    ),
+                    const _SectionTitle('История платежей'),
                     Padding(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
-                      child: Column(
-                        children: [
-                          _PaymentRow(
-                            date: '14 фев 2026',
-                            plan: 'Pyrita Pro · 3 мес',
-                            amount: '₽2 690',
-                          ),
-                          _PaymentRow(
-                            date: '12 ноя 2025',
-                            plan: 'Pyrita Plus · 1 мес',
-                            amount: '₽890',
-                          ),
-                          _PaymentRow(
-                            date: '10 окт 2025',
-                            plan: 'Pyrita Plus · 1 мес',
-                            amount: '₽890',
-                          ),
-                        ],
-                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: PyDS.sp4 + 2),
+                      child: _PaymentsList(payments: _payments),
                     ),
                     const _SectionTitle('Уведомления'),
                     Padding(
@@ -862,12 +865,19 @@ class _DeviceRow extends StatelessWidget {
 }
 
 class _ReferralCard extends StatelessWidget {
-  const _ReferralCard({required this.code});
+  const _ReferralCard({required this.data});
 
-  final String code;
+  final ReferralData? data;
 
   @override
   Widget build(BuildContext context) {
+    final d = data;
+    // Display-форма URL — без https://, чтобы помещалось в карточку.
+    final displayUrl = d != null
+        ? d.url.replaceFirst(RegExp(r'^https?://'), '')
+        : 'pyrita.com/r/…';
+    final copyText = d?.url ?? '';
+
     return Container(
       padding: const EdgeInsets.all(PyDS.sp4),
       decoration: BoxDecoration(
@@ -934,7 +944,7 @@ class _ReferralCard extends StatelessWidget {
                     ),
                   ),
                   child: Text(
-                    code,
+                    displayUrl,
                     overflow: TextOverflow.ellipsis,
                     style: PyDS.font(
                       size: 12,
@@ -948,16 +958,18 @@ class _ReferralCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               InkWell(
-                onTap: () async {
-                  await Clipboard.setData(ClipboardData(text: code));
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Скопировано'),
-                      duration: Duration(seconds: 1),
-                    ),
-                  );
-                },
+                onTap: d == null
+                    ? null
+                    : () async {
+                        await Clipboard.setData(ClipboardData(text: copyText));
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Скопировано'),
+                            duration: Duration(seconds: 1),
+                          ),
+                        );
+                      },
                 borderRadius: BorderRadius.circular(PyDS.rSm),
                 child: Container(
                   width: 38,
@@ -979,10 +991,16 @@ class _ReferralCard extends StatelessWidget {
           const Divider(color: PyDS.stroke, height: 1),
           const SizedBox(height: 12),
           Row(
-            children: const [
-              Expanded(child: _KV(value: '7', label: 'приглашено')),
-              Expanded(child: _KV(value: '4', label: 'оплатили')),
-              Expanded(child: _KV(value: '120', label: 'дней дано')),
+            children: [
+              Expanded(
+                child: _KV(value: '${d?.invited ?? 0}', label: 'приглашено'),
+              ),
+              Expanded(
+                child: _KV(value: '${d?.paid ?? 0}', label: 'оплатили'),
+              ),
+              Expanded(
+                child: _KV(value: '${d?.daysEarned ?? 0}', label: 'дней дано'),
+              ),
             ],
           ),
         ],
@@ -1123,6 +1141,296 @@ class _PaymentRow extends StatelessWidget {
               color: PyDS.text,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Список устройств юзера — Pyrita app, Hiddify на других гаджетах, etc.
+/// Самое свежее устройство (last_seen) идёт первым с подписью «(это устройство)».
+class _DevicesList extends StatelessWidget {
+  const _DevicesList({required this.list});
+
+  final DeviceListResult? list;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = list;
+    if (l == null) {
+      return Column(
+        children: const [
+          _DeviceRowSkeleton(),
+          SizedBox(height: PyDS.sp2),
+          _DeviceRowSkeleton(),
+        ],
+      );
+    }
+    if (l.devices.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: PyDS.sp3),
+        child: Text(
+          'Пока не открыто ни одно устройство. Открой Account на ещё одном — оно появится тут.',
+          style: PyDS.font(
+            size: 12,
+            weight: FontWeight.w500,
+            color: PyDS.textFaint,
+          ),
+        ),
+      );
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return Column(
+      children: [
+        for (int i = 0; i < l.devices.length; i++) ...[
+          if (i > 0) const SizedBox(height: PyDS.sp2),
+          _DeviceRow(
+            icon: _iconForLabel(l.devices[i].label),
+            // Первое = самое свежее по серверу (ORDER BY last_seen_at DESC).
+            name: i == 0
+                ? '${l.devices[i].label ?? "Неизвестное"} (это устройство)'
+                : (l.devices[i].label ?? 'Неизвестное'),
+            subtitle: _relativeTime(now, l.devices[i].lastSeenAt),
+            active: i == 0,
+          ),
+        ],
+      ],
+    );
+  }
+
+  static IconData _iconForLabel(String? label) {
+    if (label == null) return Icons.help_outline;
+    final l = label.toLowerCase();
+    if (l.contains('pyrita') || l.contains('iphone') || l.contains('android')) {
+      return Icons.smartphone_outlined;
+    }
+    if (l.contains('mac')) return Icons.laptop_mac_outlined;
+    if (l.contains('windows')) return Icons.laptop_windows_outlined;
+    if (l.contains('linux')) return Icons.laptop_outlined;
+    if (l.contains('hiddify') || l.contains('sing-box') || l.contains('clash')) {
+      return Icons.vpn_lock_outlined;
+    }
+    return Icons.public;
+  }
+
+  /// «сейчас» / «5 мин» / «3 ч» / «вчера» / «5 дней» / «2 нед».
+  static String _relativeTime(int now, int then) {
+    final diffMs = now - then;
+    if (diffMs < 60000) return 'сейчас';
+    final minutes = diffMs ~/ 60000;
+    if (minutes < 60) return '$minutes мин назад';
+    final hours = minutes ~/ 60;
+    if (hours < 24) return '$hours ч назад';
+    final days = hours ~/ 24;
+    if (days == 1) return 'вчера';
+    if (days < 7) return '$days дн назад';
+    final weeks = days ~/ 7;
+    return '$weeks нед назад';
+  }
+}
+
+/// Placeholder для skeleton-state.
+class _DeviceRowSkeleton extends StatelessWidget {
+  const _DeviceRowSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return PyCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: PyDS.sp3 + 2,
+        vertical: PyDS.sp3 - 1,
+      ),
+      radius: PyDS.rMd,
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: PyDS.bg2,
+              borderRadius: BorderRadius.circular(PyDS.rSm),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(width: 140, height: 12, color: PyDS.bg2),
+                const SizedBox(height: 4),
+                Container(width: 60, height: 9, color: PyDS.bg2),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Три stat-карточки (Трафик / Онлайн / Угрозы) на real-данных из
+/// `/api/me/stats`. null-значения → «—» + хинт «появится скоро» (Phase C).
+class _UsageRow extends StatelessWidget {
+  const _UsageRow({required this.stats});
+
+  final UsageStats? stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = stats;
+
+    // Трафик
+    final trafficUsed = s?.trafficUsedGb;
+    final trafficLimit = s?.trafficLimitGb;
+    final trafficValue = trafficUsed != null
+        ? trafficUsed.toStringAsFixed(1)
+        : '—';
+    final trafficHint = trafficUsed == null
+        ? 'загрузка…'
+        : (trafficLimit != null
+            ? 'из ${trafficLimit.toStringAsFixed(0)} GB'
+            : 'без лимита');
+    final trafficPct = (trafficUsed != null &&
+            trafficLimit != null &&
+            trafficLimit > 0)
+        ? (trafficUsed / trafficLimit).clamp(0.0, 1.0)
+        : 0.0;
+
+    // Онлайн — TODO Phase C (sing-box stats)
+    final onlineValue = s?.onlineHours?.toString() ?? '—';
+    final onlineHint = s == null
+        ? 'загрузка…'
+        : (s.onlineHours == null ? 'появится скоро' : 'в этом мес.');
+
+    // Угрозы — TODO Phase C (sing-box geosite blocklist counter)
+    final threatsValue = s?.threatsBlocked?.toString() ?? '—';
+    final threatsHint = s == null
+        ? 'загрузка…'
+        : (s.threatsBlocked == null ? 'появится скоро' : 'заблокировано');
+
+    return Row(
+      children: [
+        Expanded(
+          child: _BigStatCard(
+            label: 'Трафик',
+            value: trafficValue,
+            unit: trafficUsed != null ? 'GB' : '',
+            hint: trafficHint,
+            pct: trafficPct,
+          ),
+        ),
+        const SizedBox(width: PyDS.sp2),
+        Expanded(
+          child: _BigStatCard(
+            label: 'Онлайн',
+            value: onlineValue,
+            unit: s?.onlineHours != null ? 'ч' : '',
+            hint: onlineHint,
+            pct: 0,
+            color: PyDS.on,
+          ),
+        ),
+        const SizedBox(width: PyDS.sp2),
+        Expanded(
+          child: _BigStatCard(
+            label: 'Угроз',
+            value: threatsValue,
+            unit: '',
+            hint: threatsHint,
+            pct: 0,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Wrapper над списком оплат — обрабатывает три состояния:
+///   * `payments == null` — ещё грузится, показываем 3 skeleton-row'а
+///   * `payments.isEmpty` — у юзера ни одной оплаты, мягкое сообщение
+///   * иначе — реальный список (до 10 рядов)
+///
+/// Маппинг plan_id → human-label дублирует словарь из `pyrita-web/lib/billing.ts`
+/// (если billing-сторона изменит названия, оба файла надо обновить).
+class _PaymentsList extends StatelessWidget {
+  const _PaymentsList({required this.payments});
+
+  final List<PaymentRecord>? payments;
+
+  static const _planLabels = {
+    '1m': 'Pyrita · 1 мес',
+    '3m': 'Pyrita · 3 мес',
+    '6m': 'Pyrita · 6 мес',
+    '12m': 'Pyrita · 12 мес',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final p = payments;
+    if (p == null) {
+      // Skeleton — 2 пустых ряда чтобы сохранить вертикальный ритм пока
+      // загружается.
+      return Column(
+        children: const [
+          _PaymentRowSkeleton(),
+          _PaymentRowSkeleton(),
+        ],
+      );
+    }
+    if (p.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: PyDS.sp3),
+        child: Text(
+          'Платежей пока нет. Активная подписка — пробный период.',
+          style: PyDS.font(
+            size: 12,
+            weight: FontWeight.w500,
+            color: PyDS.textFaint,
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: p.map((rec) {
+        final date = DateFormat('d MMM y', 'ru_RU')
+            .format(DateTime.fromMillisecondsSinceEpoch(rec.paidAt));
+        final plan = _planLabels[rec.planId] ?? 'Pyrita · ${rec.planId}';
+        // Формат суммы «₽2 690» — пробел-разделитель тысяч.
+        final amount = '₽${NumberFormat('#,##0', 'ru_RU').format(rec.amountRub)}'
+            .replaceAll(' ', ' ');
+        return _PaymentRow(date: date, plan: plan, amount: amount);
+      }).toList(),
+    );
+  }
+}
+
+/// Placeholder-ряд для skeleton-state. Совпадает по высоте с _PaymentRow
+/// чтобы layout не «прыгал» когда данные приходят.
+class _PaymentRowSkeleton extends StatelessWidget {
+  const _PaymentRowSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 4),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: PyDS.strokeSoft, width: 1)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(width: 120, height: 12, color: PyDS.bg2),
+                const SizedBox(height: 4),
+                Container(width: 60, height: 9, color: PyDS.bg2),
+              ],
+            ),
+          ),
+          Container(width: 50, height: 12, color: PyDS.bg2),
         ],
       ),
     );
