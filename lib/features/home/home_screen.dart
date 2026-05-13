@@ -5,17 +5,21 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/api_client.dart';
 import '../../core/theme.dart';
+import '../../core/vpn_controller.dart';
 import '../../shared/widgets/py_app_icon.dart';
 import '../../shared/widgets/py_button.dart';
 import '../../shared/widgets/py_card.dart';
 import '../../shared/widgets/py_flag.dart';
 import '../../shared/widgets/py_pulse.dart';
 import '../../shared/widgets/py_tab_bar.dart';
+import '../onboarding/vpn_permission_intro.dart';
 
 /// Главный экран — sonar hero + Connect/Disconnect.
 ///
-/// **Phase A mockup**: connection state — локальный, не туннелирует.
-/// Phase C добавит реальный VpnService binding к sing-box-core.
+/// Phase C: state источник — `vpnControllerProvider` (StateNotifier поверх
+/// V2ray instance из flutter_v2ray_client). Tap-on-sonar (или CTA button)
+/// поднимает реальный VLESS+Reality туннель через Xray-core; stat tiles
+/// реактивно показывают bytes_in/out из onStatusChanged callback.
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -24,7 +28,6 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  ConnState _state = ConnState.active;
   Map<String, dynamic>? _me;
 
   @override
@@ -49,23 +52,65 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _toggle() async {
-    // Tactile feedback — лёгкий "тык" при переключении.
     HapticFeedback.lightImpact();
 
-    if (_state == ConnState.connecting) {
-      setState(() => _state = ConnState.idle);
+    final controller = ref.read(vpnControllerProvider.notifier);
+    final status = ref.read(vpnControllerProvider);
+
+    // Если уже подключен или подключается — это disconnect-action.
+    if (status.isConnected || status.isConnecting) {
+      await controller.stop();
       return;
     }
-    if (_state == ConnState.idle) {
-      setState(() => _state = ConnState.connecting);
-      await Future.delayed(const Duration(milliseconds: 1200));
+
+    // Guard: истёкшая подписка → редирект в checkout.
+    final subStatus = _me?['subscription_status'];
+    if (subStatus is Map && subStatus['kind'] == 'expired') {
       if (!mounted) return;
-      setState(() => _state = ConnState.active);
-      // Чуть более ощутимая отдача при успешном connect.
-      HapticFeedback.mediumImpact();
+      _showSnack('Подписка истекла. Продлите её, чтобы подключиться.');
+      context.go('/checkout');
       return;
     }
-    setState(() => _state = ConnState.idle);
+
+    // Pre-onboarding gate — только в первый раз.
+    final alreadyAsked = await controller.hasPermissionEverBeenRequested();
+    if (!alreadyAsked) {
+      if (!mounted) return;
+      final consent = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          builder: (_) => const VpnPermissionIntroScreen(),
+          fullscreenDialog: true,
+        ),
+      );
+      if (consent != true) return;
+    }
+
+    // System dialog — Android попросит разрешение, если ещё не дано.
+    final granted = await controller.requestPermission();
+    if (!granted) {
+      if (!mounted) return;
+      _showSnack(
+        'Без разрешения Pyrita не сможет защитить трафик. '
+        'Попробуйте ещё раз.',
+      );
+      return;
+    }
+
+    // Поднимаем туннель — controller сам fetch'ит /api/me, парсит sub URL,
+    // строит конфиг с RU bypass и стартует Xray-core.
+    await controller.start();
+
+    HapticFeedback.mediumImpact();
+  }
+
+  void _showSnack(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text, style: PyDS.font(size: 13, color: PyDS.text)),
+        backgroundColor: PyDS.bg2,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   bool get _expiringSoon {
@@ -82,6 +127,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Слушаем VPN status — UI реактивно перерисуется на каждый
+    // onStatusChanged callback (примерно раз в секунду пока активно).
+    final vpnStatus = ref.watch(vpnControllerProvider);
+
+    // Также ловим переход в error → snackbar.
+    ref.listen<PyritaVpnStatus>(vpnControllerProvider, (prev, next) {
+      if (next.isError && prev?.isError != true) {
+        _showSnack(next.errorMessage ?? 'Не удалось подключиться');
+      }
+    });
+
+    final connState = _mapState(vpnStatus.state);
+
     return Scaffold(
       backgroundColor: PyDS.bg,
       body: DecoratedBox(
@@ -96,10 +154,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   children: [
                     _PulseTapTarget(
                       onTap: _toggle,
-                      child: PyPulse(size: 232, state: _state),
+                      child: PyPulse(size: 232, state: connState),
                     ),
                     const SizedBox(height: PyDS.sp3),
-                    _StatusBlock(state: _state),
+                    _StatusBlock(state: connState),
                   ],
                 ),
               ),
@@ -121,11 +179,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
                 child: Column(
                   children: [
-                    const _ServerCard(),
+                    _ServerCard(connected: vpnStatus.isConnected),
                     const SizedBox(height: PyDS.sp2 + 2),
-                    _StatRow(state: _state),
+                    _StatRow(status: vpnStatus),
                     const SizedBox(height: PyDS.sp2 + 2),
-                    _ConnectButton(state: _state, onTap: _toggle),
+                    _ConnectButton(state: connState, onTap: _toggle),
                   ],
                 ),
               ),
@@ -136,6 +194,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       bottomNavigationBar: const PyTabBar(active: PyTab.home),
     );
   }
+
+  /// Маппинг PyritaVpnState → ConnState (UI layer). Error treat как idle
+  /// визуально — snackbar объясняет что произошло.
+  ConnState _mapState(PyritaVpnState s) => switch (s) {
+        PyritaVpnState.connected => ConnState.active,
+        PyritaVpnState.connecting => ConnState.connecting,
+        _ => ConnState.idle, // disconnected, error
+      };
 }
 
 class _HomeTopBar extends StatelessWidget {
@@ -301,7 +367,9 @@ class _StatusBlock extends StatelessWidget {
 }
 
 class _ServerCard extends StatelessWidget {
-  const _ServerCard();
+  const _ServerCard({required this.connected});
+
+  final bool connected;
 
   @override
   Widget build(BuildContext context) {
@@ -351,54 +419,63 @@ class _ServerCard extends StatelessWidget {
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: PyDS.on,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: PyDS.on.withValues(alpha: 0.6),
-                          blurRadius: 8,
-                        ),
-                      ],
+          // Ping показываем только когда connected. Phase C — заглушка
+          // 24 ms (real live-ping в 4.5 через getConnectedServerDelay).
+          if (connected)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: PyDS.on,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: PyDS.on.withValues(alpha: 0.6),
+                            blurRadius: 8,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '24',
-                    style: PyDS.font(
-                      size: 13,
-                      weight: FontWeight.w700,
-                      color: PyDS.on,
+                    const SizedBox(width: 4),
+                    Text(
+                      '24',
+                      style: PyDS.font(
+                        size: 13,
+                        weight: FontWeight.w700,
+                        color: PyDS.on,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 2),
-                  Text(
-                    'MS',
-                    style: PyDS.font(
-                      size: 10,
-                      weight: FontWeight.w600,
-                      letterSpacing: 0.4,
-                      color: PyDS.textFaint,
+                    const SizedBox(width: 2),
+                    Text(
+                      'MS',
+                      style: PyDS.font(
+                        size: 10,
+                        weight: FontWeight.w600,
+                        letterSpacing: 0.4,
+                        color: PyDS.textFaint,
+                      ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 2),
-              const Icon(
-                Icons.chevron_right,
-                size: 14,
-                color: PyDS.textFaint,
-              ),
-            ],
-          ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                const Icon(
+                  Icons.chevron_right,
+                  size: 14,
+                  color: PyDS.textFaint,
+                ),
+              ],
+            )
+          else
+            const Icon(
+              Icons.chevron_right,
+              size: 14,
+              color: PyDS.textFaint,
+            ),
         ],
       ),
     );
@@ -406,20 +483,28 @@ class _ServerCard extends StatelessWidget {
 }
 
 class _StatRow extends StatelessWidget {
-  const _StatRow({required this.state});
+  const _StatRow({required this.status});
 
-  final ConnState state;
+  final PyritaVpnStatus status;
+
+  /// Форматирует bytes/sec → Mb/s (megabits, для UI юзер ждёт привычные
+  /// провайдерские единицы). 1 байт = 8 бит, MB/s × 8 = Mbps.
+  String _mbps(int bytesPerSec) {
+    final mbps = (bytesPerSec * 8) / 1_000_000;
+    if (mbps < 0.1) return '0.0';
+    return mbps.toStringAsFixed(1);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final on = state == ConnState.active;
+    final on = status.isConnected;
     return Row(
       children: [
         Expanded(
           child: _StatTile(
             icon: Icons.keyboard_arrow_down_rounded,
             label: 'Загрузка',
-            value: on ? '142.8' : '0.0',
+            value: on ? _mbps(status.downloadSpeed) : '0.0',
             unit: 'Mb/s',
           ),
         ),
@@ -428,16 +513,18 @@ class _StatRow extends StatelessWidget {
           child: _StatTile(
             icon: Icons.keyboard_arrow_up_rounded,
             label: 'Отдача',
-            value: on ? '28.4' : '0.0',
+            value: on ? _mbps(status.uploadSpeed) : '0.0',
             unit: 'Mb/s',
           ),
         ),
         const SizedBox(width: PyDS.sp2),
+        // Phase C: «Заблокировано» — заглушка. Real-counter возможен только
+        // когда Xray-core stats покажут rules-match'и (Phase D).
         Expanded(
           child: _StatTile(
             icon: Icons.shield_outlined,
-            label: 'Заблокировано',
-            value: on ? '12' : '0',
+            label: 'Защищено',
+            value: on ? '✓' : '—',
             unit: '',
             color: PyDS.on,
           ),

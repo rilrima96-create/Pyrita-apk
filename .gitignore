@@ -53,3 +53,6 @@ google-services.json
 *.apk
 *.aab
 *.ipa
+
+# CI artifacts (gh run download outputs)
+ci-artifacts/

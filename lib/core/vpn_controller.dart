@@ -1,0 +1,319 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_v2ray_client/flutter_v2ray.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'api_client.dart';
+
+/// Состояние VPN-туннеля для UI-слоя.
+///
+/// Маппится из `V2RayStatus.state` (плагин даёт UPPERCASE строки):
+///   * `DISCONNECTED` → `disconnected`
+///   * `CONNECTING` → `connecting`
+///   * `CONNECTED` → `connected`
+///   * прочее → `error`
+enum PyritaVpnState { disconnected, connecting, connected, error }
+
+/// Снимок состояния VPN на момент времени. Иммутабельный — Riverpod-friendly.
+///
+/// Поля скоростей и трафика приходят от Xray-core stats каждые ~1 сек, когда
+/// state == connected. В idle/error — нули (плагин не эмитит обновления).
+@immutable
+class PyritaVpnStatus {
+  const PyritaVpnStatus({
+    required this.state,
+    this.uploadSpeed = 0,
+    this.downloadSpeed = 0,
+    this.uploadTotal = 0,
+    this.downloadTotal = 0,
+    this.duration = '00:00:00',
+    this.errorMessage,
+  });
+
+  final PyritaVpnState state;
+
+  /// Текущая скорость отдачи, байт/сек.
+  final int uploadSpeed;
+
+  /// Текущая скорость загрузки, байт/сек.
+  final int downloadSpeed;
+
+  /// Всего отдано за текущую сессию, байт.
+  final int uploadTotal;
+
+  /// Всего получено за текущую сессию, байт.
+  final int downloadTotal;
+
+  /// Длительность сессии в формате 'HH:MM:SS' (от плагина).
+  final String duration;
+
+  /// Описание последней ошибки. null если state != error.
+  final String? errorMessage;
+
+  bool get isConnected => state == PyritaVpnState.connected;
+  bool get isConnecting => state == PyritaVpnState.connecting;
+  bool get isIdle => state == PyritaVpnState.disconnected;
+  bool get isError => state == PyritaVpnState.error;
+}
+
+/// Riverpod-managed VPN controller — единая точка управления туннелем.
+///
+/// Под капотом — `V2ray` instance из `flutter_v2ray_client` (Xray-core
+/// MPL-2.0). Плагин держит native Android VpnService, MethodChannel и
+/// EventChannel внутри — наш код просто проводит status в Riverpod-state
+/// и реализует Pyrita-specific логику (sub URL fetch, RU bypass routing,
+/// pre-onboarding gate).
+///
+/// Lifecycle:
+///   * Конструктор — создаёт V2ray + запускает фоновую initialize()
+///   * `start()` — fetch /api/me → парсит sub URL → строит Xray config →
+///     `_v2ray.startV2Ray(...)`. Plugin emit'ит status через callback,
+///     обновляем state.
+///   * `stop()` — `_v2ray.stopV2Ray()`. Status callback emit'нет
+///     `DISCONNECTED` сам.
+class VpnController extends StateNotifier<PyritaVpnStatus> {
+  VpnController()
+      : super(const PyritaVpnStatus(state: PyritaVpnState.disconnected)) {
+    _v2ray = V2ray(onStatusChanged: _onStatusChanged);
+    _initFuture = _init();
+  }
+
+  late final V2ray _v2ray;
+  late final Future<void> _initFuture;
+
+  /// Marzban subscription URL может вернуть base64-блок ИЛИ plain text
+  /// в зависимости от настроек сервера. Try both.
+  static const _prefKeyPermissionRequested = 'vpn_permission_requested';
+
+  Future<void> _init() async {
+    // Notification icon — используем launcher-иконку приложения. Та же
+    // что в pubspec.yaml → flutter_launcher_icons → icon-b-pyrite.png.
+    await _v2ray.initialize(
+      notificationIconResourceType: 'mipmap',
+      notificationIconResourceName: 'ic_launcher',
+    );
+  }
+
+  void _onStatusChanged(V2RayStatus s) {
+    if (!mounted) return;
+    final mapped = switch (s.state.toUpperCase()) {
+      'CONNECTED' => PyritaVpnState.connected,
+      'CONNECTING' => PyritaVpnState.connecting,
+      'DISCONNECTED' => PyritaVpnState.disconnected,
+      _ => PyritaVpnState.error,
+    };
+    state = PyritaVpnStatus(
+      state: mapped,
+      uploadSpeed: s.uploadSpeed,
+      downloadSpeed: s.downloadSpeed,
+      uploadTotal: s.upload,
+      downloadTotal: s.download,
+      duration: s.duration,
+    );
+  }
+
+  /// Запрашивает VpnService.prepare() — system dialog «Разрешить Pyrita
+  /// настраивать VPN». Returns true если пользователь принял (или уже
+  /// был принят ранее). Параллельно сохраняем флаг «запрос был сделан»
+  /// для pre-onboarding-гейта.
+  Future<bool> requestPermission() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefKeyPermissionRequested, true);
+    return _v2ray.requestPermission();
+  }
+
+  /// Запрашивался ли VpnService.prepare() хоть раз?
+  /// Использует pre-onboarding screen для показа explanation только
+  /// первый раз (после accept-flow или deny — больше не показываем).
+  Future<bool> hasPermissionEverBeenRequested() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_prefKeyPermissionRequested) ?? false;
+  }
+
+  /// Поднимает туннель.
+  ///
+  /// Шаги:
+  ///   1. Дожидаемся `_init` завершения (защита от race-tap)
+  ///   2. State → connecting (UI рисует pulsing sonar)
+  ///   3. Fetch /api/me → достаём subscription_url
+  ///   4. Скачиваем содержимое sub URL → base64-decode → массив URL
+  ///   5. Выбираем VLESS+Reality (или fallback на любой VLESS)
+  ///   6. Парсим через `V2ray.parseFromURL` → строим Xray-config
+  ///   7. Добавляем RU bypass routing rules
+  ///   8. Передаём config в `_v2ray.startV2Ray(...)`
+  ///   9. Плагин emit'ит CONNECTED через onStatusChanged callback —
+  ///      state обновляется автоматически.
+  Future<void> start() async {
+    await _initFuture;
+    if (!mounted) return;
+
+    state = const PyritaVpnStatus(state: PyritaVpnState.connecting);
+    try {
+      final me = await ApiClient.instance.getMe();
+      final subUrl = me['subscription_url'] as String?;
+      if (subUrl == null || subUrl.isEmpty) {
+        throw StateError('Не удалось получить subscription_url');
+      }
+
+      final config = await _buildXrayConfig(subUrl);
+      await _v2ray.startV2Ray(
+        remark: 'Pyrita · Хельсинки',
+        config: config,
+        proxyOnly: false,
+        notificationDisconnectButtonName: 'Отключить',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      state = PyritaVpnStatus(
+        state: PyritaVpnState.error,
+        errorMessage: _humanizeError(e),
+      );
+    }
+  }
+
+  /// Останавливает туннель. Plugin emit'ит DISCONNECTED через callback.
+  Future<void> stop() async {
+    try {
+      await _v2ray.stopV2Ray();
+    } catch (_) {
+      // Если уже остановлен или ещё не стартовал — молча игнорируем.
+    }
+  }
+
+  /// Скачивает Pyrita sub URL, выбирает VLESS+Reality, строит JSON-config
+  /// для Xray-core с включёнными правилами RU-bypass.
+  ///
+  /// Pyrita backend (Marzban) возвращает либо base64-encoded плоский
+  /// список URL'ов (по одной строке), либо plain text. Поддерживаем оба.
+  Future<String> _buildXrayConfig(String subUrl) async {
+    final dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 15),
+    ));
+    final resp = await dio.get<String>(
+      subUrl,
+      options: Options(
+        responseType: ResponseType.plain,
+        headers: {'User-Agent': 'Pyrita-app/Phase-C'},
+      ),
+    );
+    final raw = (resp.data ?? '').trim();
+    if (raw.isEmpty) {
+      throw StateError('Подписка вернула пустой ответ');
+    }
+
+    final urls = _parseSubscriptionBody(raw);
+    if (urls.isEmpty) {
+      throw StateError('В подписке не найдено ни одного протокола');
+    }
+
+    final vlessUrl = _pickPrimaryUrl(urls);
+
+    // Парсинг через factory плагина — определяет протокол по prefix.
+    // Для VLESS+Reality возвращает `VlessURL` с заполненными
+    // realitySettings (publicKey, shortId, fingerprint).
+    final parsed = V2ray.parseFromURL(vlessUrl);
+    final configMap =
+        Map<String, dynamic>.from(parsed.fullConfiguration);
+
+    // Routing rules: yandex/sberbank/gosuslugi и пр. RU-домены и IP
+    // идут direct (мимо туннеля). Остальной трафик — через proxy.
+    // Стандартная практика для RU-friendly VPN, чтобы не ломать банки.
+    configMap['routing'] = <String, dynamic>{
+      'domainStrategy': 'IPIfNonMatch',
+      'rules': [
+        {
+          'type': 'field',
+          'domain': ['geosite:ru', 'geosite:category-gov-ru'],
+          'outboundTag': 'direct',
+        },
+        {
+          'type': 'field',
+          'ip': ['geoip:ru', 'geoip:private'],
+          'outboundTag': 'direct',
+        },
+        {
+          'type': 'field',
+          'outboundTag': 'proxy',
+        },
+      ],
+    };
+
+    return jsonEncode(configMap);
+  }
+
+  /// Marzban sub может прийти как plain text или base64 (зависит от
+  /// настроек). Пытаемся декодировать base64; если не получается —
+  /// считаем что это уже plain text.
+  List<String> _parseSubscriptionBody(String body) {
+    String text;
+    try {
+      // Чистим whitespace и переносы — base64 может приходить «склеенным»
+      final cleaned = body.replaceAll(RegExp(r'\s+'), '');
+      text = utf8.decode(base64.decode(cleaned));
+    } catch (_) {
+      text = body;
+    }
+
+    return text
+        .split(RegExp(r'[\r\n]+'))
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty &&
+            (l.startsWith('vless://') ||
+                l.startsWith('vmess://') ||
+                l.startsWith('trojan://') ||
+                l.startsWith('ss://')))
+        .toList();
+  }
+
+  /// Выбирает primary URL из списка. Phase C поддерживает:
+  ///   1. VLESS+Reality (highest priority — primary protocol)
+  ///   2. VLESS+XHTTP (fallback, тоже через Xray-core)
+  ///   3. Любой VLESS (last resort)
+  ///
+  /// Hysteria 2 / TUIC / SS-2022 не используем в Phase C — нет parser'а
+  /// в плагине (отложено в Phase D).
+  String _pickPrimaryUrl(List<String> urls) {
+    // 1. VLESS Reality
+    final reality = urls.firstWhere(
+      (u) => u.startsWith('vless://') && u.contains('security=reality'),
+      orElse: () => '',
+    );
+    if (reality.isNotEmpty) return reality;
+
+    // 2. VLESS XHTTP
+    final xhttp = urls.firstWhere(
+      (u) => u.startsWith('vless://') && u.contains('type=xhttp'),
+      orElse: () => '',
+    );
+    if (xhttp.isNotEmpty) return xhttp;
+
+    // 3. Любой VLESS
+    return urls.firstWhere(
+      (u) => u.startsWith('vless://'),
+      orElse: () => throw StateError(
+        'В подписке не нашли VLESS — embedded клиент не сможет подключиться',
+      ),
+    );
+  }
+
+  String _humanizeError(Object e) {
+    if (e is ApiException) return e.message;
+    if (e is StateError) return e.message;
+    if (e is DioException) return 'Сеть недоступна. Проверьте соединение.';
+    return 'Не удалось подключиться: $e';
+  }
+}
+
+/// Singleton-провайдер для использования в UI:
+///
+///     final status = ref.watch(vpnControllerProvider);
+///     ref.read(vpnControllerProvider.notifier).start();
+final vpnControllerProvider =
+    StateNotifierProvider<VpnController, PyritaVpnStatus>(
+  (ref) => VpnController(),
+);
