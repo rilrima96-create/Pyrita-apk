@@ -5,12 +5,21 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!--
-        Foreground service permissions — нужны для long-running VPN
-        соединения (Phase C). Android 14+ требует FOREGROUND_SERVICE_TYPE.
-        Пока в Phase A не используется но лучше задекларировать заранее,
-        чтобы не падал build когда добавим VpnService.
+        Foreground service permissions для long-running VPN соединения.
+        Android 14+ (SDK 34+) требует matching FOREGROUND_SERVICE_* permission
+        под объявленный foregroundServiceType сервиса.
+
+        flutter_v2ray_client объявляет свой V2rayVPNService с
+        foregroundServiceType="specialUse" (см. plugin AndroidManifest).
+        Android 16 (SDK 36) делает это строгим требованием: если permission
+        отсутствует → SecurityException при startForeground() → краш
+        plugin's worker process (отдельный :RunSoLibV2RayDaemon).
+
+        FOREGROUND_SERVICE_SYSTEM_EXEMPTED оставляем как fallback на
+        случай downgrade plugin'а на старую версию.
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
 
     <!--
