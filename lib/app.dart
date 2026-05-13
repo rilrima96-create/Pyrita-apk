@@ -8,7 +8,6 @@ import 'features/auth/login_screen.dart';
 import 'features/auth/register_screen.dart';
 import 'features/checkout/checkout_screen.dart';
 import 'features/home/home_screen.dart';
-import 'features/settings/settings_screen.dart';
 import 'features/splash/splash_screen.dart';
 
 /// Root приложения. Material+go_router setup. State management через Riverpod
@@ -32,9 +31,9 @@ class PyritaApp extends ConsumerWidget {
 ///   * `/` — splash, проверяет сохранённую сессию
 ///   * `/login`, `/register` — auth flow
 ///   * `/home` — sonar hero, connect/disconnect
-///   * `/account` — личный кабинет (план, устройства, реферал, протокол)
+///   * `/account` — личный кабинет (план, устройства, реферал, протокол,
+///     подтверждение email, newsletter, sub URL, удаление аккаунта)
 ///   * `/checkout` — оплата подписки (тарифы + CryptoCloud-redirect)
-///   * `/settings` — технические настройки (legacy, доступно из account)
 final _routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/',
@@ -63,10 +62,6 @@ final _routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/checkout',
         builder: (context, state) => const CheckoutScreen(),
-      ),
-      GoRoute(
-        path: '/settings',
-        builder: (context, state) => const SettingsScreen(),
       ),
     ],
   );

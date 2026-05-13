@@ -99,9 +99,7 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
         child: SafeArea(
           child: Column(
             children: [
-              _AccountTopBar(
-                onSettings: () => context.push('/settings'),
-              ),
+              const _AccountTopBar(),
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.only(bottom: PyDS.sp3),
@@ -112,6 +110,14 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                       email: _email,
                     ),
                     const SizedBox(height: PyDS.sp4 + 2),
+                    if (_me != null && _me!['email_confirmed_at'] == null) ...[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: PyDS.sp4 + 2),
+                        child: _EmailConfirmCard(onResent: _loadMe),
+                      ),
+                      const SizedBox(height: PyDS.sp4 + 2),
+                    ],
                     Padding(
                       padding:
                           const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
@@ -220,6 +226,16 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                         ),
                       ),
                     ),
+                    const _SectionTitle('Ссылка подписки'),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: PyDS.sp4 + 2),
+                      child: _SubscriptionLinkCard(
+                        subscriptionUrl:
+                            _me?['subscription_url'] as String?,
+                        onRegenerated: _loadMe,
+                      ),
+                    ),
                     const _SectionTitle(
                       'История платежей',
                       trailing: 'Все →',
@@ -247,7 +263,16 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: PyDS.sp3),
+                    const _SectionTitle('Уведомления'),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: PyDS.sp4 + 2),
+                      child: _NewsletterCard(
+                        initialOptIn:
+                            (_me?['newsletter_opt_in'] as int? ?? 1) == 1,
+                      ),
+                    ),
+                    const SizedBox(height: PyDS.sp5),
                     Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: PyDS.sp4 + 2,
@@ -261,6 +286,14 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                         },
                       ),
                     ),
+                    const SizedBox(height: PyDS.sp3),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: PyDS.sp4 + 2),
+                      child: _DeleteAccountCard(email: _email),
+                    ),
+                    const SizedBox(height: PyDS.sp5),
+                    const _AboutFooter(),
                     const SizedBox(height: PyDS.sp4),
                   ],
                 ),
@@ -274,42 +307,24 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   }
 }
 
+/// Top bar Account-экрана. После C2-merge'а (Этап 2 плана a-b2-nifty-haven)
+/// шестерёнка «настроек» убрана — все её функции теперь живут прямо в Account,
+/// и отдельного /settings экрана больше нет.
 class _AccountTopBar extends StatelessWidget {
-  const _AccountTopBar({required this.onSettings});
-
-  final VoidCallback onSettings;
+  const _AccountTopBar();
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
+    return const Padding(
+      padding: EdgeInsets.fromLTRB(
         PyDS.sp4 + 2,
         PyDS.sp3,
         PyDS.sp4 + 2,
         PyDS.sp2 - 2,
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          const PyLogo(size: 26),
-          GestureDetector(
-            onTap: onSettings,
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: PyDS.bg2,
-                shape: BoxShape.circle,
-                border: Border.all(color: PyDS.stroke),
-              ),
-              child: const Icon(
-                Icons.settings_outlined,
-                size: 18,
-                color: PyDS.goldLight,
-              ),
-            ),
-          ),
-        ],
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: PyLogo(size: 26),
       ),
     );
   }
@@ -1106,6 +1121,505 @@ class _PaymentRow extends StatelessWidget {
               size: 13.5,
               weight: FontWeight.w800,
               color: PyDS.text,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Etap 2 (C2-merge): inline'ed settings sections.
+// Email confirm, subscription URL+regenerate, newsletter toggle, delete
+// account, about footer — раньше жили в /settings, теперь часть Account.
+// ──────────────────────────────────────────────────────────────────────
+
+/// Жёлтое предупреждение «Подтвердите email» со встроенной resend-кнопкой.
+/// Появляется только когда `me.email_confirmed_at == null`.
+class _EmailConfirmCard extends StatefulWidget {
+  const _EmailConfirmCard({required this.onResent});
+
+  /// Перезагрузить `me` в родителе после успешного resend — чтобы баннер
+  /// исчез, если пользователь успел подтвердить в браузере.
+  final VoidCallback onResent;
+
+  @override
+  State<_EmailConfirmCard> createState() => _EmailConfirmCardState();
+}
+
+class _EmailConfirmCardState extends State<_EmailConfirmCard> {
+  bool _busy = false;
+  String? _message;
+  bool _success = false;
+
+  Future<void> _resend() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await ApiClient.instance.resendEmailConfirmation();
+      if (!mounted) return;
+      setState(() {
+        _success = true;
+        _message =
+            'Письмо отправлено. Проверьте папку «Спам» если не пришло за минуту.';
+        _busy = false;
+      });
+      widget.onResent();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _success = false;
+        _message = e.message;
+        _busy = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PyCard(
+      padding: const EdgeInsets.all(PyDS.sp4),
+      radius: PyDS.rLg,
+      border: Border.all(color: PyDS.warn.withValues(alpha: 0.4), width: 1),
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0x29F5B946), Color(0x0AF5B946)],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.mark_email_unread_outlined,
+                  size: 16, color: PyDS.warn),
+              const SizedBox(width: 6),
+              Text(
+                'EMAIL НЕ ПОДТВЕРЖДЁН',
+                style: PyDS.font(
+                  size: 10.5,
+                  weight: FontWeight.w700,
+                  letterSpacing: 0.4,
+                  color: PyDS.warn,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Подтверди email — нам понадобится отправлять тех. уведомления '
+            'и чеки об оплате.',
+            style: PyDS.font(
+              size: 12.5,
+              weight: FontWeight.w500,
+              height: 1.4,
+              color: PyDS.textSoft,
+            ),
+          ),
+          if (_message != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _message!,
+              style: PyDS.font(
+                size: 11.5,
+                weight: FontWeight.w600,
+                color: _success ? PyDS.on : PyDS.danger,
+              ),
+            ),
+          ],
+          const SizedBox(height: PyDS.sp3),
+          PyButtonGhost(
+            label: _busy ? 'Отправляем…' : 'Отправить ещё раз',
+            onPressed: _busy ? null : _resend,
+            height: 40,
+            fontSize: 13,
+            color: PyDS.warn,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Подписка для других устройств (Hiddify, sing-box). На самом телефоне
+/// Pyrita импортирует sub URL автоматически, эта карточка — чтобы юзер
+/// мог переиспользовать аккаунт на ноуте/планшете.
+class _SubscriptionLinkCard extends StatefulWidget {
+  const _SubscriptionLinkCard({
+    required this.subscriptionUrl,
+    required this.onRegenerated,
+  });
+
+  final String? subscriptionUrl;
+  final VoidCallback onRegenerated;
+
+  @override
+  State<_SubscriptionLinkCard> createState() => _SubscriptionLinkCardState();
+}
+
+class _SubscriptionLinkCardState extends State<_SubscriptionLinkCard> {
+  bool _busy = false;
+
+  Future<void> _copy() async {
+    final url = widget.subscriptionUrl;
+    if (url == null) return;
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Ссылка скопирована'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _regenerate() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Перевыпустить ссылку?'),
+        content: const Text(
+          'Старая ссылка перестанет работать сразу. После этого надо будет '
+          'переимпортировать профиль во всех клиентах. Используй если '
+          'думаешь, что URL утёк.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Перевыпустить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      await ApiClient.instance.regenerateSubscription();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ссылка обновлена')),
+      );
+      widget.onRegenerated();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.message),
+          backgroundColor: PyDS.danger,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final url = widget.subscriptionUrl;
+    return PyCard(
+      padding: const EdgeInsets.all(PyDS.sp4),
+      radius: PyDS.rMd,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Для Hiddify, sing-box на ноутбуке или планшете. Этот телефон '
+            'использует ссылку автоматически.',
+            style: PyDS.font(
+              size: 11.5,
+              weight: FontWeight.w500,
+              height: 1.4,
+              color: PyDS.textFaint,
+            ),
+          ),
+          const SizedBox(height: PyDS.sp3),
+          // Сокращённое отображение URL — полный текст копируется кнопкой,
+          // визуально показываем только домен + начало токена.
+          if (url != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: PyDS.bg,
+                borderRadius: BorderRadius.circular(PyDS.rSm),
+                border: Border.all(color: PyDS.strokeStrong),
+              ),
+              child: Text(
+                _shortenUrl(url),
+                overflow: TextOverflow.ellipsis,
+                style: PyDS.font(
+                  size: 11.5,
+                  weight: FontWeight.w500,
+                  letterSpacing: 0.2,
+                  color: PyDS.goldLight,
+                  mono: true,
+                ),
+              ),
+            ),
+          const SizedBox(height: PyDS.sp3),
+          PyButtonGhost(
+            label: 'Скопировать ссылку',
+            onPressed: url == null ? null : _copy,
+            icon: const Icon(Icons.content_copy,
+                size: 14, color: PyDS.goldLight),
+            height: 42,
+            fontSize: 13,
+            color: PyDS.goldLight,
+          ),
+          const SizedBox(height: PyDS.sp2),
+          TextButton(
+            onPressed: _busy ? null : _regenerate,
+            child: Text(
+              _busy ? 'Перевыпускаем…' : 'Перевыпустить ссылку',
+              style: PyDS.font(
+                size: 12,
+                weight: FontWeight.w500,
+                color: PyDS.textFaint,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Превращает `https://pyrita.com/sub/abc123def456…` → `pyrita.com/sub/abc12…`
+  /// чтобы карточка не растягивалась под длинный token.
+  String _shortenUrl(String url) {
+    final clean = url.replaceFirst(RegExp(r'^https?://'), '');
+    if (clean.length <= 36) return clean;
+    return '${clean.substring(0, 32)}…';
+  }
+}
+
+/// Newsletter opt-in toggle. Сохраняет ответ оптимистично — UI меняется
+/// сразу, при ошибке откатывается на prev value + показывает сообщение.
+class _NewsletterCard extends StatefulWidget {
+  const _NewsletterCard({required this.initialOptIn});
+
+  final bool initialOptIn;
+
+  @override
+  State<_NewsletterCard> createState() => _NewsletterCardState();
+}
+
+class _NewsletterCardState extends State<_NewsletterCard> {
+  late bool _optIn = widget.initialOptIn;
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _toggle(bool v) async {
+    if (_busy) return;
+    final prev = _optIn;
+    setState(() {
+      _optIn = v;
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ApiClient.instance.setNewsletterOptIn(v);
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _optIn = prev;
+          _error = e.message;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PyCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: PyDS.sp4,
+        vertical: PyDS.sp2,
+      ),
+      radius: PyDS.rMd,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SwitchListTile.adaptive(
+            value: _optIn,
+            onChanged: _busy ? null : _toggle,
+            activeThumbColor: PyDS.gold,
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              'Email о тех. работах и новостях',
+              style: PyDS.font(
+                size: 13,
+                weight: FontWeight.w600,
+                color: PyDS.text,
+              ),
+            ),
+            subtitle: Text(
+              _optIn
+                  ? 'Будем писать только по делу — пару раз в месяц'
+                  : 'Только письма про подтверждение email и оплату',
+              style: PyDS.font(
+                size: 11,
+                weight: FontWeight.w500,
+                color: PyDS.textFaint,
+              ),
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              _error!,
+              style: PyDS.font(
+                size: 11.5,
+                weight: FontWeight.w500,
+                color: PyDS.danger,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Destructive «Удалить аккаунт». Двойной AlertDialog confirm — чтобы
+/// случайным двойным тапом не сжечь подписку.
+class _DeleteAccountCard extends StatefulWidget {
+  const _DeleteAccountCard({required this.email});
+
+  final String email;
+
+  @override
+  State<_DeleteAccountCard> createState() => _DeleteAccountCardState();
+}
+
+class _DeleteAccountCardState extends State<_DeleteAccountCard> {
+  bool _busy = false;
+
+  Future<void> _delete() async {
+    if (_busy) return;
+
+    // Step 1 — мягкое предупреждение.
+    final step1 = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удалить аккаунт?'),
+        content: Text(
+          'Это действие нельзя отменить. Подписка перестанет работать на '
+          'всех устройствах, Marzban-пользователь удалится навсегда.\n\n'
+          'Аккаунт: ${widget.email}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Продолжить',
+                style: PyDS.font(
+                  size: 14,
+                  weight: FontWeight.w600,
+                  color: PyDS.danger,
+                )),
+          ),
+        ],
+      ),
+    );
+    if (step1 != true || !mounted) return;
+
+    // Step 2 — финальный confirm.
+    final step2 = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Точно удалить?'),
+        content: const Text(
+          'Деньги за неиспользованную часть подписки не возвращаются. '
+          'Это последний шанс отменить.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: PyDS.danger,
+              foregroundColor: PyDS.text,
+            ),
+            child: const Text('Удалить навсегда'),
+          ),
+        ],
+      ),
+    );
+    if (step2 != true || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      await ApiClient.instance.deleteAccount();
+      if (!mounted) return;
+      context.go('/login');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.message),
+          backgroundColor: PyDS.danger,
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PyButtonGhost(
+      label: _busy ? 'Удаляем…' : 'Удалить аккаунт',
+      onPressed: _busy ? null : _delete,
+      icon: const Icon(Icons.delete_outline, size: 16, color: PyDS.danger),
+      height: 48,
+      fontSize: 13,
+      color: PyDS.danger,
+    );
+  }
+}
+
+/// Мелкая подпись «версия + поддержка» в самом низу Account.
+class _AboutFooter extends StatelessWidget {
+  const _AboutFooter();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            'Pyrita Android · v0.0.1 (1)',
+            style: PyDS.font(
+              size: 10.5,
+              weight: FontWeight.w600,
+              letterSpacing: 0.3,
+              color: PyDS.textFaint,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Поддержка: t.me/pyrita_support',
+            style: PyDS.font(
+              size: 10.5,
+              weight: FontWeight.w500,
+              color: PyDS.textFaint,
             ),
           ),
         ],
