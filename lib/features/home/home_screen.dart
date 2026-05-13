@@ -489,8 +489,10 @@ class _StatRow extends StatelessWidget {
 
   /// Форматирует bytes/sec → Mb/s (megabits, для UI юзер ждёт привычные
   /// провайдерские единицы). 1 байт = 8 бит, MB/s × 8 = Mbps.
+  /// 1000000 без digit-separator — Dart SDK constraint >=3.4.0,
+  /// underscore-syntax только с 3.6+.
   String _mbps(int bytesPerSec) {
-    final mbps = (bytesPerSec * 8) / 1_000_000;
+    final mbps = (bytesPerSec * 8) / 1000000;
     if (mbps < 0.1) return '0.0';
     return mbps.toStringAsFixed(1);
   }
