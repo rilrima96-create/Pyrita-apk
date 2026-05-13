@@ -125,11 +125,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       context: context,
       builder: (ctx) => Dialog(
         backgroundColor: PyDS.bg2,
+        insetPadding: const EdgeInsets.all(PyDS.sp3),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(PyDS.rMd),
           side: const BorderSide(color: PyDS.stroke),
         ),
-        child: Padding(
+        // Explicit-size container — Dialog default не constraintит height,
+        // и Column с logs может overflow за пределы viewport (1030px).
+        child: SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.85,
+          child: Padding(
           padding: const EdgeInsets.all(PyDS.sp4),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -166,25 +171,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 6),
-              Container(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(ctx).size.height * 0.5,
-                ),
-                padding: const EdgeInsets.all(PyDS.sp2),
-                decoration: BoxDecoration(
-                  color: PyDS.ink,
-                  borderRadius: BorderRadius.circular(PyDS.rSm),
-                  border: Border.all(color: PyDS.stroke),
-                ),
-                child: SingleChildScrollView(
-                  child: SelectableText(
-                    logsText,
-                    style: PyDS.font(
-                      size: 10.5,
-                      weight: FontWeight.w500,
-                      height: 1.4,
-                      color: PyDS.textSoft,
-                      mono: true,
+              // Expanded — logs container занимает всё available space
+              // в Dialog'е (вместо maxHeight constraint). SingleChildScrollView
+              // делает текст scrollable внутри.
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(PyDS.sp2),
+                  decoration: BoxDecoration(
+                    color: PyDS.ink,
+                    borderRadius: BorderRadius.circular(PyDS.rSm),
+                    border: Border.all(color: PyDS.stroke),
+                  ),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      logsText,
+                      style: PyDS.font(
+                        size: 10.5,
+                        weight: FontWeight.w500,
+                        height: 1.4,
+                        color: PyDS.textSoft,
+                        mono: true,
+                      ),
                     ),
                   ),
                 ),
@@ -231,6 +238,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ],
               ),
             ],
+          ),
           ),
         ),
       ),

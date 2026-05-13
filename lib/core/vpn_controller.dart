@@ -443,25 +443,27 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     final cleanJson = parsed.getFullConfiguration();
     final configMap = jsonDecode(cleanJson) as Map<String, dynamic>;
 
-    // Routing rules: yandex/sberbank/gosuslugi и пр. RU-домены и IP
-    // идут direct (мимо туннеля). Остальной трафик — через proxy.
-    // Стандартная практика для RU-friendly VPN, чтобы не ломать банки.
+    // Routing: RU bypass для приватных IP (localhost / 192.168 / 10.x).
+    //
+    // ВАЖНО: geosite:ru правило УБРАНО — plugin bundles geosite.dat
+    // без поддержки RU-кода (Xray crash на startup с
+    // 'failed to check code RU from geosite.dat > EOF'). Verified
+    // через диалог-диагностику в acceptance test.
+    //
+    // geoip:ru тоже не используется по той же причине (geoip.dat может
+    // быть несовместим). Только loopback/private + default proxy.
+    //
+    // Это значит yandex.ru / sberbank.ru / gosuslugi.ru пойдут ЧЕРЕЗ
+    // VPN-туннель — банк может REJECT FI IP. Phase D — добавить
+    // bundled свежие geo files в app assets и копировать в filesDir
+    // на первом запуске.
     configMap['routing'] = <String, dynamic>{
-      'domainStrategy': 'IPIfNonMatch',
+      'domainStrategy': 'AsIs',
       'rules': [
         {
           'type': 'field',
-          'domain': ['geosite:ru', 'geosite:category-gov-ru'],
+          'ip': ['geoip:private'],
           'outboundTag': 'direct',
-        },
-        {
-          'type': 'field',
-          'ip': ['geoip:ru', 'geoip:private'],
-          'outboundTag': 'direct',
-        },
-        {
-          'type': 'field',
-          'outboundTag': 'proxy',
         },
       ],
     };
