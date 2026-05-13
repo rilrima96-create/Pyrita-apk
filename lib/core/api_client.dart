@@ -253,6 +253,29 @@ class ApiClient {
     }
   }
 
+  /// GET /api/me/protocols. Список VPN-протоколов которые раздаёт Pyrita
+  /// через subscription URL. Phase A — read-only display; Phase C будет
+  /// позволять переключать active.
+  Future<List<ProtocolInfo>> getProtocols() async {
+    try {
+      final res = await _dio.get("/api/me/protocols");
+      if (res.statusCode == 200 && res.data is Map) {
+        final raw = (res.data as Map)["protocols"];
+        if (raw is! List) return const [];
+        return raw
+            .whereType<Map>()
+            .map((m) => ProtocolInfo.fromJson(Map<String, dynamic>.from(m)))
+            .toList();
+      }
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: "Не удалось загрузить список протоколов",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
   /// GET /api/me/referral. Реферальный код юзера + статистика приведённых.
   /// Код lazy-генерируется на сервере при первом запросе — стабильный после.
   Future<ReferralData> getReferral() async {
@@ -379,6 +402,46 @@ class UsageStats {
         trafficLimitGb: (m['traffic_limit_gb'] as num?)?.toDouble(),
         onlineHours: (m['online_hours'] as num?)?.toInt(),
         threatsBlocked: (m['threats_blocked'] as num?)?.toInt(),
+      );
+}
+
+/// Информация об одном VPN-протоколе доступном на Pyrita-сервере.
+class ProtocolInfo {
+  const ProtocolInfo({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.active,
+    required this.primary,
+    required this.available,
+  });
+
+  /// Stable id: 'reality' / 'hysteria2' / 'tuic' / 'ss2022' / 'xhttp'.
+  final String id;
+
+  /// Human-friendly: «VLESS Reality», «Hysteria 2», etc.
+  final String name;
+
+  /// Краткое объяснение зачем этот протокол.
+  final String description;
+
+  /// Phase A: совпадает с `primary` (sing-box ещё не интегрирован).
+  /// Phase C: реально активный outbound во встроенном клиенте.
+  final bool active;
+
+  /// Протокол по умолчанию (VLESS Reality всегда).
+  final bool primary;
+
+  /// Сконфигурирован на сервере (env'ы заполнены) — попадает в subscription URL.
+  final bool available;
+
+  factory ProtocolInfo.fromJson(Map<String, dynamic> m) => ProtocolInfo(
+        id: m['id'] as String,
+        name: m['name'] as String,
+        description: (m['description'] as String?) ?? '',
+        active: m['active'] as bool? ?? false,
+        primary: m['primary'] as bool? ?? false,
+        available: m['available'] as bool? ?? false,
       );
 }
 

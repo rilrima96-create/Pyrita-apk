@@ -25,7 +25,6 @@ class AccountScreen extends ConsumerStatefulWidget {
 
 class _AccountScreenState extends ConsumerState<AccountScreen> {
   Map<String, dynamic>? _me;
-  String _protocol = 'WireGuard';
 
   /// `null` пока грузим; `[]` после загрузки если оплат не было.
   List<PaymentRecord>? _payments;
@@ -39,6 +38,9 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   /// `null` пока грузим.
   ReferralData? _referral;
 
+  /// `null` пока грузим; `[]` если backend не вернул протоколы.
+  List<ProtocolInfo>? _protocols;
+
   @override
   void initState() {
     super.initState();
@@ -47,6 +49,7 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     _loadStats();
     _loadDevices();
     _loadReferral();
+    _loadProtocols();
   }
 
   Future<void> _loadMe() async {
@@ -118,6 +121,19 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     }
   }
 
+  Future<void> _loadProtocols() async {
+    try {
+      final p = await ApiClient.instance.getProtocols();
+      if (!mounted) return;
+      setState(() => _protocols = p);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.statusCode != 401) {
+        debugPrint('Failed to load protocols: ${e.message}');
+      }
+    }
+  }
+
   String get _email => (_me?['email'] as String?) ?? 'you@pyrita.com';
   String get _firstInitial =>
       _email.isNotEmpty ? _email.substring(0, 1).toUpperCase() : 'A';
@@ -181,6 +197,7 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                       initial: _firstInitial,
                       name: _displayName,
                       email: _email,
+                      status: _me?['subscription_status'] as Map<String, dynamic>?,
                     ),
                     const SizedBox(height: PyDS.sp4 + 2),
                     if (_me != null && _me!['email_confirmed_at'] == null) ...[
@@ -223,14 +240,11 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                           horizontal: PyDS.sp4 + 2),
                       child: _ReferralCard(data: _referral),
                     ),
-                    const _SectionTitle('Протокол'),
+                    const _SectionTitle('Протоколы'),
                     Padding(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
-                      child: _ProtocolToggle(
-                        active: _protocol,
-                        onChange: (p) => setState(() => _protocol = p),
-                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: PyDS.sp4 + 2),
+                      child: _ProtocolList(protocols: _protocols),
                     ),
                     const Padding(
                       padding: EdgeInsets.fromLTRB(
@@ -240,9 +254,11 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                         0,
                       ),
                       child: Text(
-                        'Современный протокол — лучше скорость и время '
-                        'отклика. Pyrita автоматически переключается при '
-                        'блокировках.',
+                        'Pyrita раздаёт подписку со всеми доступными '
+                        'протоколами. Активный выбирается клиентом '
+                        'автоматически — Hiddify / sing-box подберут '
+                        'самый быстрый из живых. Ручной выбор появится '
+                        'когда подключим встроенный VPN-движок (Phase C).',
                         style: TextStyle(
                           fontSize: 11.5,
                           color: PyDS.textFaint,
@@ -338,11 +354,16 @@ class _ProfileHead extends StatelessWidget {
     required this.initial,
     required this.name,
     required this.email,
+    required this.status,
   });
 
   final String initial;
   final String name;
   final String email;
+
+  /// `me.subscription_status` — discriminated union {kind, days_left, ...}.
+  /// Может быть null пока /api/me не загружено или если бэкенд изменил shape.
+  final Map<String, dynamic>? status;
 
   @override
   Widget build(BuildContext context) {
@@ -436,63 +457,92 @@ class _ProfileHead extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0x1AF5DDA3),
-                        borderRadius: BorderRadius.circular(PyDS.rPill),
-                        border: Border.all(color: PyDS.strokeStrong),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.auto_awesome,
-                            size: 10,
-                            color: PyDS.goldLight,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'PRO',
-                            style: PyDS.font(
-                              size: 9.5,
-                              weight: FontWeight.w700,
-                              letterSpacing: 0.6,
-                              color: PyDS.goldLight,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: PyDS.bg2,
-                        borderRadius: BorderRadius.circular(PyDS.rPill),
-                        border: Border.all(color: PyDS.stroke),
-                      ),
-                      child: Text(
-                        'ID #18472',
-                        style: PyDS.font(
-                          size: 9.5,
-                          weight: FontWeight.w700,
-                          letterSpacing: 0.6,
-                          color: PyDS.textMute,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                _StatusBadge(status: status),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Status pill в ProfileHead. Discriminated union по subscription_status.kind:
+///   trial   → жёлтый «TRIAL · N дн»
+///   paid    → золотой «PRO» (если активен) либо «PRO · истекает через N»
+///   expired → красный «EXPIRED»
+///   null    → серый «…» (placeholder пока грузим)
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.status});
+
+  final Map<String, dynamic>? status;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = status;
+    String label;
+    Color bg;
+    Color fg;
+    Color border;
+    IconData? icon;
+
+    if (s == null) {
+      label = '…';
+      bg = PyDS.bg2;
+      fg = PyDS.textFaint;
+      border = PyDS.stroke;
+    } else {
+      final kind = s['kind'] as String?;
+      final daysLeft = (s['days_left'] as num?)?.toInt();
+      switch (kind) {
+        case 'trial':
+          label = daysLeft != null ? 'TRIAL · $daysLeft ДН' : 'TRIAL';
+          bg = const Color(0x29F5B946); // warn-tint
+          fg = PyDS.warn;
+          border = PyDS.warn.withValues(alpha: 0.4);
+          break;
+        case 'paid':
+          label = daysLeft != null ? 'PRO · $daysLeft ДН' : 'PRO';
+          bg = const Color(0x1AF5DDA3); // gold-tint
+          fg = PyDS.goldLight;
+          border = PyDS.strokeStrong;
+          icon = Icons.auto_awesome;
+          break;
+        case 'expired':
+          label = 'EXPIRED';
+          bg = const Color(0x29E26A5E); // danger-tint
+          fg = PyDS.danger;
+          border = PyDS.danger.withValues(alpha: 0.4);
+          break;
+        default:
+          label = (kind ?? 'unknown').toUpperCase();
+          bg = PyDS.bg2;
+          fg = PyDS.textMute;
+          border = PyDS.stroke;
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(PyDS.rPill),
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 10, color: fg),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: PyDS.font(
+              size: 9.5,
+              weight: FontWeight.w700,
+              letterSpacing: 0.6,
+              color: fg,
             ),
           ),
         ],
@@ -1043,46 +1093,193 @@ class _KV extends StatelessWidget {
   }
 }
 
-class _ProtocolToggle extends StatelessWidget {
-  const _ProtocolToggle({required this.active, required this.onChange});
+/// Read-only список реальных протоколов которые раздаёт Pyrita-server.
+/// Phase A: read-only display, активный определяется автоматически
+/// сервером (VLESS Reality — default). Phase C добавит возможность ручного
+/// переключения для встроенного sing-box клиента.
+class _ProtocolList extends StatelessWidget {
+  const _ProtocolList({required this.protocols});
 
-  final String active;
-  final ValueChanged<String> onChange;
+  final List<ProtocolInfo>? protocols;
 
-  static const _options = ['WireGuard', 'OpenVPN', 'IKEv2'];
+  @override
+  Widget build(BuildContext context) {
+    final list = protocols;
+    if (list == null) {
+      return const Column(
+        children: [
+          _ProtocolRowSkeleton(),
+          SizedBox(height: PyDS.sp2),
+          _ProtocolRowSkeleton(),
+        ],
+      );
+    }
+    if (list.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: PyDS.sp3),
+        child: Text(
+          'Не удалось загрузить список протоколов.',
+          style: PyDS.font(
+            size: 12,
+            weight: FontWeight.w500,
+            color: PyDS.textFaint,
+          ),
+        ),
+      );
+    }
+    return Column(
+      children: [
+        for (int i = 0; i < list.length; i++) ...[
+          if (i > 0) const SizedBox(height: PyDS.sp2),
+          _ProtocolRow(info: list[i]),
+        ],
+      ],
+    );
+  }
+}
+
+class _ProtocolRow extends StatelessWidget {
+  const _ProtocolRow({required this.info});
+
+  final ProtocolInfo info;
+
+  @override
+  Widget build(BuildContext context) {
+    final isActive = info.active;
+    final isAvailable = info.available;
+
+    return PyCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: PyDS.sp3 + 2,
+        vertical: PyDS.sp3 - 1,
+      ),
+      radius: PyDS.rMd,
+      // Активный — золотая обводка; недоступный — приглушённая;
+      // available-but-not-active — обычный stroke.
+      border: Border.all(
+        color: isActive
+            ? PyDS.strokeStrong
+            : (isAvailable ? PyDS.stroke : PyDS.strokeSoft),
+        width: isActive ? 1.5 : 1,
+      ),
+      gradient: isActive
+          ? const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0x1FF5DDA3), Color(0x05C9A875)],
+            )
+          : null,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        info.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: PyDS.font(
+                          size: 13.5,
+                          weight: FontWeight.w700,
+                          color: isAvailable ? PyDS.text : PyDS.textFaint,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    if (isActive)
+                      _ProtocolBadge(
+                        label: 'АКТИВЕН',
+                        bg: PyDS.gold.withValues(alpha: 0.18),
+                        fg: PyDS.goldLight,
+                      )
+                    else if (!isAvailable)
+                      _ProtocolBadge(
+                        label: 'НЕ НАСТРОЕН',
+                        bg: PyDS.bg2,
+                        fg: PyDS.textFaint,
+                      )
+                    else
+                      _ProtocolBadge(
+                        label: 'ДОСТУПЕН',
+                        bg: PyDS.bg2,
+                        fg: PyDS.textSoft,
+                      ),
+                  ],
+                ),
+                if (info.description.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    info.description,
+                    style: PyDS.font(
+                      size: 11,
+                      weight: FontWeight.w500,
+                      height: 1.35,
+                      color: PyDS.textFaint,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProtocolBadge extends StatelessWidget {
+  const _ProtocolBadge({
+    required this.label,
+    required this.bg,
+    required this.fg,
+  });
+
+  final String label;
+  final Color bg;
+  final Color fg;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(PyDS.rPill),
+      ),
+      child: Text(
+        label,
+        style: PyDS.font(
+          size: 9,
+          weight: FontWeight.w700,
+          letterSpacing: 0.5,
+          color: fg,
+        ),
+      ),
+    );
+  }
+}
+
+class _ProtocolRowSkeleton extends StatelessWidget {
+  const _ProtocolRowSkeleton();
 
   @override
   Widget build(BuildContext context) {
     return PyCard(
-      padding: const EdgeInsets.all(4),
-      radius: PyDS.rLg,
-      child: Row(
+      padding: const EdgeInsets.symmetric(
+        horizontal: PyDS.sp3 + 2,
+        vertical: PyDS.sp3 - 1,
+      ),
+      radius: PyDS.rMd,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          for (final opt in _options)
-            Expanded(
-              child: GestureDetector(
-                onTap: () => onChange(opt),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 11),
-                  decoration: BoxDecoration(
-                    gradient: opt == active ? PyDS.gradGold : null,
-                    borderRadius: BorderRadius.circular(PyDS.rMd),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    opt,
-                    style: PyDS.font(
-                      size: 13,
-                      weight: FontWeight.w700,
-                      letterSpacing: -0.1,
-                      color: opt == active
-                          ? const Color(0xFF1A140A)
-                          : PyDS.textMute,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+          Container(width: 120, height: 13, color: PyDS.bg2),
+          const SizedBox(height: 6),
+          Container(width: 220, height: 10, color: PyDS.bg2),
         ],
       ),
     );
@@ -1913,7 +2110,7 @@ class _AboutFooter extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(
-            'Pyrita Android · v0.0.3 (3)',
+            'Pyrita Android · v0.0.4 (4)',
             style: PyDS.font(
               size: 10.5,
               weight: FontWeight.w600,
