@@ -419,8 +419,17 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     // Для VLESS+Reality возвращает `VlessURL` с заполненными
     // realitySettings (publicKey, shortId, fingerprint).
     final parsed = V2ray.parseFromURL(vlessUrl);
-    final configMap =
-        Map<String, dynamic>.from(parsed.fullConfiguration);
+
+    // КРИТИЧЕСКИ ВАЖНО: используем getFullConfiguration() (метод), а не
+    // fullConfiguration (raw Map). Метод дополнительно вызывает
+    // removeNulls() — без этого config содержит десятки null полей
+    // в outbound1/outbound2/outbound3 settings (servers: null, response: null,
+    // address: null, port: null, secretKey: null, peers: null и т.п.).
+    // Xray-core на parse такого JSON может вести себя undefined: ранее
+    // зависал на startV2Ray() Future в pending state — обнаружено
+    // на Android 16 при первом acceptance test.
+    final cleanJson = parsed.getFullConfiguration();
+    final configMap = jsonDecode(cleanJson) as Map<String, dynamic>;
 
     // Routing rules: yandex/sberbank/gosuslugi и пр. RU-домены и IP
     // идут direct (мимо туннеля). Остальной трафик — через proxy.
