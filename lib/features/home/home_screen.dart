@@ -89,10 +89,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final granted = await controller.requestPermission();
     if (!granted) {
       if (!mounted) return;
-      _showSnack(
-        'Без разрешения Pyrita не сможет защитить трафик. '
-        'Попробуйте ещё раз.',
-      );
+      // Android API не различает «user denied» и «другой VPN активен» —
+      // оба возвращают granted=false. Диалог покрывает оба случая.
+      final retry = await _showPermissionConflictDialog();
+      if (retry == true) {
+        await _toggle();
+      }
       return;
     }
 
@@ -109,6 +111,69 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         content: Text(text, style: PyDS.font(size: 13, color: PyDS.text)),
         backgroundColor: PyDS.bg2,
         behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  /// Диалог при granted=false от VpnService.prepare(). Покрывает оба
+  /// сценария: юзер deny'нул system-dialog ИЛИ у него уже активен
+  /// другой VPN (Android API не различает их).
+  Future<bool?> _showPermissionConflictDialog() {
+    return showDialog<bool>(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: PyDS.bg2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(PyDS.rMd),
+          side: const BorderSide(color: PyDS.stroke),
+        ),
+        title: Text(
+          'Не получилось подключиться',
+          style: PyDS.font(
+            size: 18,
+            weight: FontWeight.w800,
+            color: PyDS.text,
+            letterSpacing: -0.3,
+          ),
+        ),
+        content: Text(
+          'Pyrita не получила разрешение на VPN.\n\n'
+          'Возможные причины:\n'
+          '• Вы отказали в системном окне\n'
+          '• На устройстве активен другой VPN (Hiddify, '
+          'AmneziaVPN и т.п.) — отключите его и попробуйте снова',
+          style: PyDS.font(
+            size: 13.5,
+            weight: FontWeight.w500,
+            height: 1.5,
+            color: PyDS.textSoft,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              'Закрыть',
+              style: PyDS.font(
+                size: 14,
+                weight: FontWeight.w600,
+                color: PyDS.textMute,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              'Попробовать снова',
+              style: PyDS.font(
+                size: 14,
+                weight: FontWeight.w700,
+                color: PyDS.goldLight,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -179,7 +244,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
                 child: Column(
                   children: [
-                    _ServerCard(connected: vpnStatus.isConnected),
+                    _ServerCard(
+                      connected: vpnStatus.isConnected,
+                      pingMs: vpnStatus.serverPingMs,
+                    ),
                     const SizedBox(height: PyDS.sp2 + 2),
                     _StatRow(status: vpnStatus),
                     const SizedBox(height: PyDS.sp2 + 2),
@@ -367,9 +435,10 @@ class _StatusBlock extends StatelessWidget {
 }
 
 class _ServerCard extends StatelessWidget {
-  const _ServerCard({required this.connected});
+  const _ServerCard({required this.connected, this.pingMs});
 
   final bool connected;
+  final int? pingMs;
 
   @override
   Widget build(BuildContext context) {
@@ -419,8 +488,9 @@ class _ServerCard extends StatelessWidget {
               ],
             ),
           ),
-          // Ping показываем только когда connected. Phase C — заглушка
-          // 24 ms (real live-ping в 4.5 через getConnectedServerDelay).
+          // Live ping показываем только когда connected и измерение есть.
+          // Без измерения (первые 5 сек после connect) — рендерим только
+          // зелёную точку + dash, без числа.
           if (connected)
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -443,7 +513,7 @@ class _ServerCard extends StatelessWidget {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      '24',
+                      pingMs != null ? '$pingMs' : '—',
                       style: PyDS.font(
                         size: 13,
                         weight: FontWeight.w700,

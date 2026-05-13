@@ -67,14 +67,19 @@ jobs:
           flutter create . --org com.pyrita --project-name pyrita_app \
             --platforms android --no-pub --no-overwrite || true
 
-      - name: Build debug APK
-        run: flutter build apk --debug
+      # Phase C: --split-per-abi разделяет универсальный APK на arm64-v8a /
+      # armeabi-v7a / x86_64 (debug-build). Каждый ~70-90 МБ вместо ~260 МБ
+      # universal-APK (Xray-core .so файлы — 4 ABI × ~50 MB = ~200 MB одних
+      # natives). Релевантно для testing-pipeline'а: arm64 APK достаточен
+      # для 99% устройств.
+      - name: Build debug APK (per-ABI splits)
+        run: flutter build apk --debug --split-per-abi
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: pyrita-debug-apk-${{ github.sha }}
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          path: build/app/outputs/flutter-apk/app-*-debug.apk
           retention-days: 14
 
   build-release:
@@ -131,11 +136,16 @@ jobs:
           flutter create . --org com.pyrita --project-name pyrita_app \
             --platforms android --no-pub --no-overwrite || true
 
-      - name: Build release APK
-        run: flutter build apk --release
+      # Phase C: per-ABI splits для release. RuStore любит универсальный
+      # APK, но он у нас ~120 МБ release с Xray-core. Per-ABI даёт ~50 МБ
+      # arm64-v8a (мейнстрим), ~45 МБ armeabi-v7a (старые/бюджет), ~55 МБ
+      # x86_64 (эмулятор / Chromebook). Releases уйдут все три файла —
+      # юзер скачивает соответствующий своей архитектуре.
+      - name: Build release APK (per-ABI splits)
+        run: flutter build apk --release --split-per-abi
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: build/app/outputs/flutter-apk/app-*-release.apk
           fail_on_unmatched_files: true

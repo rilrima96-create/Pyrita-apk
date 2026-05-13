@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -32,6 +33,7 @@ class PyritaVpnStatus {
     this.downloadTotal = 0,
     this.duration = '00:00:00',
     this.errorMessage,
+    this.serverPingMs,
   });
 
   final PyritaVpnState state;
@@ -54,10 +56,36 @@ class PyritaVpnStatus {
   /// Описание последней ошибки. null если state != error.
   final String? errorMessage;
 
+  /// Latency до сервера, мс. Обновляется раз в ~5 сек когда connected.
+  /// null = ещё не измерено или нерелевантно (idle/error).
+  final int? serverPingMs;
+
   bool get isConnected => state == PyritaVpnState.connected;
   bool get isConnecting => state == PyritaVpnState.connecting;
   bool get isIdle => state == PyritaVpnState.disconnected;
   bool get isError => state == PyritaVpnState.error;
+
+  PyritaVpnStatus copyWith({
+    PyritaVpnState? state,
+    int? uploadSpeed,
+    int? downloadSpeed,
+    int? uploadTotal,
+    int? downloadTotal,
+    String? duration,
+    String? errorMessage,
+    int? serverPingMs,
+  }) {
+    return PyritaVpnStatus(
+      state: state ?? this.state,
+      uploadSpeed: uploadSpeed ?? this.uploadSpeed,
+      downloadSpeed: downloadSpeed ?? this.downloadSpeed,
+      uploadTotal: uploadTotal ?? this.uploadTotal,
+      downloadTotal: downloadTotal ?? this.downloadTotal,
+      duration: duration ?? this.duration,
+      errorMessage: errorMessage ?? this.errorMessage,
+      serverPingMs: serverPingMs ?? this.serverPingMs,
+    );
+  }
 }
 
 /// Riverpod-managed VPN controller — единая точка управления туннелем.
@@ -80,13 +108,26 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       : super(const PyritaVpnStatus(state: PyritaVpnState.disconnected)) {
     _v2ray = V2ray(onStatusChanged: _onStatusChanged);
     _initFuture = _init();
+    _wireConnectivity();
   }
 
   late final V2ray _v2ray;
   late final Future<void> _initFuture;
 
-  /// Marzban subscription URL может вернуть base64-блок ИЛИ plain text
-  /// в зависимости от настроек сервера. Try both.
+  /// Кэшированный Xray-config для быстрого auto-reconnect без повторного
+  /// `/api/me` + `/api/sub` round-trip'а при network change.
+  String? _lastConfigForReconnect;
+
+  /// Period-таймер для обновления server ping каждые 5 сек когда connected.
+  Timer? _pingTimer;
+
+  /// Subscription на connectivity_plus events. Cancel в dispose().
+  StreamSubscription<List<ConnectivityResult>>? _connSub;
+
+  /// Был ли VPN активен непосредственно перед потерей сети. Это сигнал
+  /// что нужен auto-reconnect когда сеть вернётся.
+  bool _wasConnectedBeforeNetLoss = false;
+
   static const _prefKeyPermissionRequested = 'vpn_permission_requested';
 
   Future<void> _init() async {
@@ -106,14 +147,107 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       'DISCONNECTED' => PyritaVpnState.disconnected,
       _ => PyritaVpnState.error,
     };
-    state = PyritaVpnStatus(
+    state = state.copyWith(
       state: mapped,
       uploadSpeed: s.uploadSpeed,
       downloadSpeed: s.downloadSpeed,
       uploadTotal: s.upload,
       downloadTotal: s.download,
       duration: s.duration,
+      // Сбрасываем ping при не-connected state (UI рендерит '—' в idle).
+      serverPingMs: mapped == PyritaVpnState.connected ? state.serverPingMs : null,
+      // Очищаем error message при успешном connect.
+      errorMessage: mapped == PyritaVpnState.connected ? null : state.errorMessage,
     );
+
+    // Ping-timer работает только когда туннель активен.
+    if (mapped == PyritaVpnState.connected) {
+      _startPingTimer();
+    } else {
+      _stopPingTimer();
+    }
+  }
+
+  // ─────────────────────────────── Live ping ───────────────────────────────
+
+  void _startPingTimer() {
+    _pingTimer?.cancel();
+    _pingTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+      try {
+        final ms = await _v2ray.getConnectedServerDelay();
+        if (!mounted || !state.isConnected) return;
+        state = state.copyWith(serverPingMs: ms);
+      } catch (_) {
+        // Timeout / measurement error — игнорим, в следующий тик попробуем.
+      }
+    });
+  }
+
+  void _stopPingTimer() {
+    _pingTimer?.cancel();
+    _pingTimer = null;
+  }
+
+  // ─────────────────────────── Auto-reconnect ─────────────────────────────
+
+  void _wireConnectivity() {
+    _connSub = Connectivity().onConnectivityChanged.listen((events) {
+      final hasNetwork =
+          events.any((e) => e != ConnectivityResult.none);
+
+      if (!hasNetwork) {
+        // Сеть пропала. Запоминаем что туннель был активен — пригодится
+        // когда сеть восстановится.
+        if (state.isConnected) {
+          _wasConnectedBeforeNetLoss = true;
+        }
+        return;
+      }
+
+      // Сеть вернулась. Если до потери был connected, но Xray уже не
+      // держит туннель (он обычно падает при network change) — поднимаем
+      // заново. 2 сек паузы дают сетевому стеку стабилизироваться.
+      if (_wasConnectedBeforeNetLoss && !state.isConnected) {
+        _wasConnectedBeforeNetLoss = false;
+        unawaited(_autoReconnect());
+      } else if (state.isConnected) {
+        // Туннель пережил change (редко, но бывает на iOS-стиле seamless
+        // hand-off). Очищаем флаг.
+        _wasConnectedBeforeNetLoss = false;
+      }
+    });
+  }
+
+  Future<void> _autoReconnect() async {
+    await Future.delayed(const Duration(seconds: 2));
+    if (!mounted) return;
+
+    // Быстрый path: используем кэшированный config (не дёргаем /api/me).
+    final cached = _lastConfigForReconnect;
+    if (cached != null) {
+      try {
+        state = const PyritaVpnStatus(state: PyritaVpnState.connecting);
+        await _v2ray.startV2Ray(
+          remark: 'Pyrita · Хельсинки',
+          config: cached,
+          proxyOnly: false,
+          notificationDisconnectButtonName: 'Отключить',
+        );
+        return;
+      } catch (_) {
+        // Кэш протух (например, серверный uuid ротировался) —
+        // откатываемся на полный start() с refresh подписки.
+      }
+    }
+    await start();
+  }
+
+  @override
+  void dispose() {
+    _stopPingTimer();
+    _connSub?.cancel();
+    _connSub = null;
+    super.dispose();
   }
 
   /// Запрашивает VpnService.prepare() — system dialog «Разрешить Pyrita
@@ -160,6 +294,7 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       }
 
       final config = await _buildXrayConfig(subUrl);
+      _lastConfigForReconnect = config;
       await _v2ray.startV2Ray(
         remark: 'Pyrita · Хельсинки',
         config: config,
@@ -177,6 +312,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
 
   /// Останавливает туннель. Plugin emit'ит DISCONNECTED через callback.
   Future<void> stop() async {
+    // Явный stop пользователем — отменяем потенциальный auto-reconnect.
+    // Иначе сценарий: сеть пропадает → юзер тапает «отключить» → сеть
+    // возвращается → tunnel сам поднимается (нежелательно).
+    _wasConnectedBeforeNetLoss = false;
     try {
       await _v2ray.stopV2Ray();
     } catch (_) {
@@ -272,7 +411,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
 
   /// Выбирает primary URL из списка. Phase C поддерживает:
   ///   1. VLESS+Reality (highest priority — primary protocol)
-  ///   2. VLESS+XHTTP (fallback, тоже через Xray-core)
+  ///   2. VLESS+XHTTP — fallback на случай если backend начнёт его класть
+  ///      в подписку (сейчас нет: legacy base64 не содержит xhttp URL,
+  ///      Hiddify его не понимает, Pyrita backend пока его выдаёт только
+  ///      через /api/me/protocols, а не в /api/sub). Branch на будущее.
   ///   3. Любой VLESS (last resort)
   ///
   /// Hysteria 2 / TUIC / SS-2022 не используем в Phase C — нет parser'а
