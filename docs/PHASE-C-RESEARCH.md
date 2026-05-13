@@ -38,6 +38,24 @@
 требует source), но для будущей commercialization (Stage 6 плана
 `steady-churning-cray`) GPL заблокирует продажу.
 
+### Commercial precedent
+
+Browsec (Premium commercial VPN, distributed on Google Play, paid
+subscription model) **открыто использует Xray в UI** — engine toggle с
+подписью «XRay» в главном экране. Screenshot из 2026-05-13.
+
+Доказывает что:
+1. Юридически Xray-путь работает для коммерции — Browsec прошёл Play
+   Store review, продаёт подписки без license-conflict
+2. MPL-2.0 совместима с пейволлами — paid features за подпиской не
+   нарушают лицензию (юзер не может потребовать «выдайте мне premium
+   бесплатно потому что GPL»)
+3. Xray стандарт для commercial VPN — мы не пионеры
+
+Если когда-то будут юристы или инвесторы — Browsec / NordVPN / ProtonVPN
+все embed-ят VPN-движки в коммерческие подписочные приложения.
+MPL-2.0 на Xray = стандартная практика, не serious legal risk.
+
 ---
 
 ## Выбор движка: Xray-core (MPL-2.0)
