@@ -282,7 +282,27 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   ///   9. Плагин emit'ит CONNECTED через onStatusChanged callback —
   ///      state обновляется автоматически.
   Future<void> start() async {
-    await _initFuture;
+    // Защитный timeout на initialize() — если plugin init hangs (например,
+    // MethodChannel registration упал на native стороне), без этого
+    // дальнейший код никогда не выполнится.
+    try {
+      await _initFuture.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException(
+          'Не удалось инициализировать VPN-движок за 15 сек. '
+          'Plugin native side не отвечает. '
+          'Попробуйте перезапустить приложение.',
+          const Duration(seconds: 15),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      state = PyritaVpnStatus(
+        state: PyritaVpnState.error,
+        errorMessage: _humanizeError(e),
+      );
+      return;
+    }
     if (!mounted) return;
 
     state = const PyritaVpnStatus(state: PyritaVpnState.connecting);
@@ -296,9 +316,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       final config = await _buildXrayConfig(subUrl);
       _lastConfigForReconnect = config;
 
-      // Timeout protect — если plugin worker-process краснёт или зависнет,
-      // startV2Ray() future никогда не resolve-ится, state застрянет в
-      // connecting навсегда. 30 sec — щедро для Xray initial handshake.
+      // Timeout на startV2Ray — plugin worker process может крашнуть
+      // без propagation exception в Dart. 30 sec — щедро для Xray handshake.
       await _v2ray.startV2Ray(
         remark: 'Pyrita · Хельсинки',
         config: config,
@@ -309,29 +328,27 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
         onTimeout: () => throw TimeoutException(
           'VPN-движок не ответил за 30 сек. '
           'Возможно процесс упал — переустановите приложение или '
-          'отправьте логи разработчику.',
+          'нажмите «Показать логи» на главном экране.',
           const Duration(seconds: 30),
         ),
       );
 
-      // Fallback: если через 5 сек статус не сменился на connecting/connected
-      // от плагина — что-то странное (например, plugin молчит). Force-check.
-      await Future.delayed(const Duration(seconds: 5));
+      // Fallback: если через 8 сек после startV2Ray статус не стал connected,
+      // считаем что Xray где-то застрял (handshake fail / DNS / blocked).
+      await Future.delayed(const Duration(seconds: 8));
       if (mounted &&
-          state.state == PyritaVpnState.connecting &&
-          state.uploadTotal == 0 &&
-          state.downloadTotal == 0) {
-        // Получим plugin logs для diagnose'а. Только Android.
+          state.state != PyritaVpnState.connected) {
+        // Получим plugin logs для diagnose'а.
         String diag = '';
         try {
           final logs = await _v2ray.getLogs();
           if (logs.isNotEmpty) {
-            diag = '\n\nПоследние логи Xray:\n' +
-                logs.reversed.take(5).join('\n');
+            diag = '\n\nXray logs:\n' +
+                logs.reversed.take(8).join('\n');
           }
         } catch (_) {}
         throw StateError(
-          'Туннель не поднялся за 5 сек после старта.$diag',
+          'Не удалось установить соединение за 8 сек.$diag',
         );
       }
     } catch (e) {
@@ -342,6 +359,19 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       );
     }
   }
+
+  /// Запрашивает последние Xray logs от плагина для UI debug-screen.
+  /// Возвращает пустой список при ошибке (например, plugin не инициализирован).
+  Future<List<String>> fetchLogs() async {
+    try {
+      return await _v2ray.getLogs();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Текущий cached config, если есть. Для debug-screen.
+  String? get currentConfig => _lastConfigForReconnect;
 
   /// Останавливает туннель. Plugin emit'ит DISCONNECTED через callback.
   Future<void> stop() async {

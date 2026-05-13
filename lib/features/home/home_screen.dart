@@ -105,6 +105,135 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     HapticFeedback.mediumImpact();
   }
 
+  /// Открывает AlertDialog с последними логами Xray + текущим config'ом.
+  /// Используется для диагностики connecting-зависания или error-state'а.
+  Future<void> _showLogsDialog() async {
+    final controller = ref.read(vpnControllerProvider.notifier);
+    final status = ref.read(vpnControllerProvider);
+    final logs = await controller.fetchLogs();
+    final config = controller.currentConfig;
+    if (!mounted) return;
+
+    final logsText = logs.isEmpty
+        ? '(пусто — plugin ещё не запустил Xray или getLogs() не сработал)'
+        : logs.reversed.take(40).join('\n');
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: PyDS.bg2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(PyDS.rMd),
+          side: const BorderSide(color: PyDS.stroke),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(PyDS.sp4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Диагностика VPN',
+                style: PyDS.font(
+                  size: 17,
+                  weight: FontWeight.w800,
+                  color: PyDS.text,
+                ),
+              ),
+              const SizedBox(height: PyDS.sp2),
+              Text(
+                'State: ${status.state.name}'
+                '${status.errorMessage != null ? "\nError: ${status.errorMessage}" : ""}'
+                '\nConfig cached: ${config != null ? "yes (${config.length} chars)" : "no"}',
+                style: PyDS.font(
+                  size: 12,
+                  weight: FontWeight.w500,
+                  color: PyDS.textSoft,
+                  mono: true,
+                ),
+              ),
+              const SizedBox(height: PyDS.sp3),
+              Text(
+                'XRAY LOGS (последние 40):',
+                style: PyDS.font(
+                  size: 10.5,
+                  weight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                  color: PyDS.textFaint,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(ctx).size.height * 0.5,
+                ),
+                padding: const EdgeInsets.all(PyDS.sp2),
+                decoration: BoxDecoration(
+                  color: PyDS.ink,
+                  borderRadius: BorderRadius.circular(PyDS.rSm),
+                  border: Border.all(color: PyDS.stroke),
+                ),
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    logsText,
+                    style: PyDS.font(
+                      size: 10.5,
+                      weight: FontWeight.w500,
+                      height: 1.4,
+                      color: PyDS.textSoft,
+                      mono: true,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: PyDS.sp3),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  TextButton(
+                    onPressed: () async {
+                      await Clipboard.setData(ClipboardData(
+                        text: 'State: ${status.state.name}\n'
+                            'Error: ${status.errorMessage ?? ""}\n\n'
+                            'Logs:\n$logsText',
+                      ));
+                      if (!ctx.mounted) return;
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(
+                          content: Text('Скопировано в буфер'),
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
+                    },
+                    child: Text(
+                      'Скопировать',
+                      style: PyDS.font(
+                        size: 13,
+                        weight: FontWeight.w600,
+                        color: PyDS.goldLight,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: Text(
+                      'Закрыть',
+                      style: PyDS.font(
+                        size: 13,
+                        weight: FontWeight.w600,
+                        color: PyDS.textMute,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showSnack(String text) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -226,6 +355,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ],
                 ),
               ),
+              // Persistent error banner — показывается пока state.errorMessage
+              // не очищен (cleared on next successful connect или новый start).
+              // Виден всегда — не пропадает как snackbar.
+              if (vpnStatus.errorMessage != null && vpnStatus.isError)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: PyDS.sp4 + 2,
+                  ),
+                  child: _ErrorBanner(
+                    message: vpnStatus.errorMessage!,
+                    onShowLogs: () => _showLogsDialog(),
+                  ),
+                ),
+              // Debug-кнопка «Показать логи» когда долгое connecting (>10 sec).
+              if (vpnStatus.isConnecting)
+                _ConnectingDebugButton(onShowLogs: () => _showLogsDialog()),
               if (_expiringSoon)
                 Padding(
                   padding: const EdgeInsets.symmetric(
@@ -713,6 +858,113 @@ class _ConnectButton extends StatelessWidget {
       );
     }
     return PyButtonGold(label: 'Подключить', onPressed: onTap, fontSize: 16);
+  }
+}
+
+/// Persistent error banner — показывается пока state.isError. Не пропадает
+/// как snackbar; пользователь может прочитать ошибку и нажать «Показать логи».
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message, required this.onShowLogs});
+
+  final String message;
+  final VoidCallback onShowLogs;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: PyDS.sp2 + 2),
+      padding: const EdgeInsets.symmetric(
+        horizontal: PyDS.sp4,
+        vertical: PyDS.sp3,
+      ),
+      decoration: BoxDecoration(
+        color: PyDS.danger.withValues(alpha: 0.10),
+        border: Border.all(color: PyDS.danger.withValues(alpha: 0.45)),
+        borderRadius: BorderRadius.circular(PyDS.rMd),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.error_outline,
+                  size: 18, color: PyDS.danger),
+              const SizedBox(width: PyDS.sp2),
+              Expanded(
+                child: Text(
+                  'Ошибка подключения',
+                  style: PyDS.font(
+                    size: 13,
+                    weight: FontWeight.w700,
+                    color: PyDS.danger,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: onShowLogs,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: PyDS.bg,
+                    borderRadius: BorderRadius.circular(PyDS.rPill),
+                    border: Border.all(
+                        color: PyDS.danger.withValues(alpha: 0.4)),
+                  ),
+                  child: Text(
+                    'ЛОГИ',
+                    style: PyDS.font(
+                      size: 10,
+                      weight: FontWeight.w700,
+                      letterSpacing: 0.6,
+                      color: PyDS.danger,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message,
+            style: PyDS.font(
+              size: 11.5,
+              weight: FontWeight.w500,
+              height: 1.4,
+              color: PyDS.textSoft,
+            ),
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Маленькая ссылка-debug «Показать логи» под sonar когда state==connecting.
+/// Появляется чтобы юзер мог получить диагностику если зависнет.
+class _ConnectingDebugButton extends StatelessWidget {
+  const _ConnectingDebugButton({required this.onShowLogs});
+
+  final VoidCallback onShowLogs;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: PyDS.sp2),
+      child: TextButton(
+        onPressed: onShowLogs,
+        child: Text(
+          'Долго подключаемся? Показать логи',
+          style: PyDS.font(
+            size: 12,
+            weight: FontWeight.w600,
+            color: PyDS.textFaint,
+          ),
+        ),
+      ),
+    );
   }
 }
 
