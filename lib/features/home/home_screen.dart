@@ -940,7 +940,9 @@ class _ErrorBanner extends StatelessWidget {
               height: 1.4,
               color: PyDS.textSoft,
             ),
-            maxLines: 4,
+            // 2 строки только — реальные логи в диалоге «ЛОГИ».
+            // Без этого banner растягивается на 8+ строк и пушит UI вниз.
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
         ],

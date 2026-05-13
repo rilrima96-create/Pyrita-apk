@@ -316,6 +316,13 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       final config = await _buildXrayConfig(subUrl);
       _lastConfigForReconnect = config;
 
+      // Race-condition guard для VPN handoff. Когда Android grants permission
+      // нашему app'у, он СНАЧАЛА убивает текущий active VPN (Hiddify etc.),
+      // и только потом наш VpnService может поднять туннель. Без задержки
+      // plugin может crash'ить пытаясь create TUN interface пока Android
+      // ещё не освободил VPN-слот. 1.5 сек обычно достаточно.
+      await Future.delayed(const Duration(milliseconds: 1500));
+
       // Timeout на startV2Ray — plugin worker process может крашнуть
       // без propagation exception в Dart. 30 sec — щедро для Xray handshake.
       await _v2ray.startV2Ray(
