@@ -339,12 +339,17 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       if (mounted &&
           state.state != PyritaVpnState.connected) {
         // Получим plugin logs для diagnose'а.
+        // errorMessage идёт в state.errorMessage и используется как preview.
+        // Полный лог пользователь увидит в auto-открывающемся диалоге
+        // (home_screen → _showLogsDialog) — там 500 строк со скроллом.
+        // Здесь короткий summary, top-most lines (без reverse — это начало
+        // того что Xray записал — там обычно реальная exception message).
         String diag = '';
         try {
           final logs = await _v2ray.getLogs();
           if (logs.isNotEmpty) {
-            diag = '\n\nXray logs:\n' +
-                logs.reversed.take(8).join('\n');
+            diag = '\n\nXray (первые строки):\n' +
+                logs.take(15).join('\n');
           }
         } catch (_) {}
         throw StateError(

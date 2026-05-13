@@ -114,9 +114,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final config = controller.currentConfig;
     if (!mounted) return;
 
+    // Показываем ВСЕ logs (до 500 строк) — Xray exception обычно
+    // в начале output'а (top of stack trace), мы не хотим truncate'ить.
+    // Reversed = newest first (нам важно последнее произошедшее).
     final logsText = logs.isEmpty
         ? '(пусто — plugin ещё не запустил Xray или getLogs() не сработал)'
-        : logs.reversed.take(40).join('\n');
+        : logs.reversed.take(500).join('\n');
 
     showDialog<void>(
       context: context,
@@ -325,10 +328,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     // onStatusChanged callback (примерно раз в секунду пока активно).
     final vpnStatus = ref.watch(vpnControllerProvider);
 
-    // Также ловим переход в error → snackbar.
+    // На переход в error — auto-open диалог с full logs + copy-button.
+    // Snackbar малоинформативен (пропадает за 4 сек), banner может clip
+    // длинный stack trace — диалог гарантированно показывает всё.
     ref.listen<PyritaVpnStatus>(vpnControllerProvider, (prev, next) {
       if (next.isError && prev?.isError != true) {
-        _showSnack(next.errorMessage ?? 'Не удалось подключиться');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _showLogsDialog();
+        });
       }
     });
 
