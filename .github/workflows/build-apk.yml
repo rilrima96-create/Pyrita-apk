@@ -82,6 +82,11 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
 
+    # GITHUB_TOKEN по умолчанию read-only с 2023 года; для создания
+    # GitHub Release через softprops/action-gh-release@v2 нужен contents:write.
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
