@@ -50,6 +50,18 @@ dependencies:
   # cookies сохраняются, юзер видит лочный padlock-icon.
   url_launcher: ^6.3.0
 
+  # Phase C: real VPN tunnel через Xray-core (MPL-2.0 binary, MIT wrapper).
+  # Embeds Xray v26.4.17 для Android — VLESS+Reality / VLESS XHTTP / Hysteria 2.
+  # См. ~/.claude/plans/c-phase-vpn-integration.md и
+  # pyrita-app/docs/PHASE-C-RESEARCH.md для license-audit и backup wrapper.
+  # ВАЖНО: версию НЕ менять без re-audit'а (license-drift risk R6).
+  flutter_v2ray_client: ^3.2.0
+
+  # Phase C: auto-reconnect при network change (WiFi ↔ 4G).
+  # Listener на connectivity events → restart tunnel.
+  # v7.x требует Flutter >=3.19.0 (наш CI ставит 3.41.9 — OK).
+  connectivity_plus: ^7.1.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
