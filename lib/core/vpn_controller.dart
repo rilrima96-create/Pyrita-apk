@@ -323,46 +323,33 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       // ещё не освободил VPN-слот. 1.5 сек обычно достаточно.
       await Future.delayed(const Duration(milliseconds: 1500));
 
-      // Timeout на startV2Ray — plugin worker process может крашнуть
-      // без propagation exception в Dart. 30 sec — щедро для Xray handshake.
+      // startV2Ray() обычно resolve-ится за <500ms — plugin запускает
+      // Xray в фоне и возвращает control. CONNECTED status приходит
+      // через onStatusChanged callback позже, когда Xray handshake'ит
+      // с сервером (Reality+TLS может занимать 5-30 сек на медленных
+      // сетях; user network может быть RKN-filtered → handshake slow).
+      //
+      // 60 сек timeout — только для случая если plugin worker process
+      // crashes и Future никогда не resolve'ится.
       await _v2ray.startV2Ray(
         remark: 'Pyrita · Хельсинки',
         config: config,
         proxyOnly: false,
         notificationDisconnectButtonName: 'Отключить',
       ).timeout(
-        const Duration(seconds: 30),
+        const Duration(seconds: 60),
         onTimeout: () => throw TimeoutException(
-          'VPN-движок не ответил за 30 сек. '
-          'Возможно процесс упал — переустановите приложение или '
-          'нажмите «Показать логи» на главном экране.',
-          const Duration(seconds: 30),
+          'VPN-движок не ответил за 60 сек. Возможно процесс упал.',
+          const Duration(seconds: 60),
         ),
       );
 
-      // Fallback: если через 8 сек после startV2Ray статус не стал connected,
-      // считаем что Xray где-то застрял (handshake fail / DNS / blocked).
-      await Future.delayed(const Duration(seconds: 8));
-      if (mounted &&
-          state.state != PyritaVpnState.connected) {
-        // Получим plugin logs для diagnose'а.
-        // errorMessage идёт в state.errorMessage и используется как preview.
-        // Полный лог пользователь увидит в auto-открывающемся диалоге
-        // (home_screen → _showLogsDialog) — там 500 строк со скроллом.
-        // Здесь короткий summary, top-most lines (без reverse — это начало
-        // того что Xray записал — там обычно реальная exception message).
-        String diag = '';
-        try {
-          final logs = await _v2ray.getLogs();
-          if (logs.isNotEmpty) {
-            diag = '\n\nXray (первые строки):\n' +
-                logs.take(15).join('\n');
-          }
-        } catch (_) {}
-        throw StateError(
-          'Не удалось установить соединение за 8 сек.$diag',
-        );
-      }
+      // НЕ делаем premature check на state==connected. Plugin сам
+      // emit'ит CONNECTED через onStatusChanged когда handshake завершится.
+      // До этого state остаётся connecting (UI показывает пульсирующий
+      // sonar). Если за минуту CONNECTED не пришёл — это уже network/
+      // server issue, не plugin crash — юзер может сам нажать кнопку
+      // «Долго подключаемся? Показать логи» для диагностики.
     } catch (e) {
       if (!mounted) return;
       state = PyritaVpnStatus(
