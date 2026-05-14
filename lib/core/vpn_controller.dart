@@ -446,7 +446,28 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       'error': '',
     };
 
-    // PLUGIN BUG WORKAROUND (issue #25 flutter_v2ray_client):
+    // PLUGIN BUG WORKAROUND #1 — port mismatch between Xray inbound и tun2socks:
+    //
+    // Plugin's V2RayURL base class defaults inbound.port = 1080.
+    // Plugin's V2rayConfig.LOCAL_SOCKS5_PORT = 10808 (hardcoded в Java).
+    // Plugin's V2rayVPNService spawns tun2socks с `--socks-server-addr
+    // 127.0.0.1:10808`.
+    //
+    // Net effect: Xray listens 1080, tun2socks dials 10808 — никто на
+    // 10808 не слушает → packets никуда не идут → state forever
+    // CONNECTING без признаков activity.
+    //
+    // Это plugin design bug — мы override port на 10808 чтобы Xray
+    // listened на тот же port что и tun2socks dials.
+    final inbounds = configMap['inbounds'] as List?;
+    if (inbounds != null && inbounds.isNotEmpty) {
+      final firstInbound = inbounds[0];
+      if (firstInbound is Map) {
+        firstInbound['port'] = 10808;
+      }
+    }
+
+    // PLUGIN BUG WORKAROUND #2 (issue #25 flutter_v2ray_client):
     // libv2ray.aar в plugin v3.2.0 имеет проблему с VLESS+XTLS
     // flow=xtls-rprx-vision — handshake completes, но трафик не
     // proxy'ится → state stuck в connecting навсегда.
