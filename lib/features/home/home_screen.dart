@@ -68,7 +68,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     if (subStatus is Map && subStatus['kind'] == 'expired') {
       if (!mounted) return;
       _showSnack('Подписка истекла. Продлите её, чтобы подключиться.');
-      context.go('/checkout');
+      context.push('/checkout');
       return;
     }
 
@@ -392,7 +392,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     horizontal: PyDS.sp4 + 2,
                   ),
                   child: _ExpiringBanner(
-                    onTap: () => context.go('/checkout'),
+                    onTap: () => context.push('/checkout'),
                   ),
                 ),
               Padding(

@@ -213,8 +213,8 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                           const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
                       child: _PlanCard(
                         info: _planInfo,
-                        onRenew: () => context.go('/checkout'),
-                        onChange: () => context.go('/checkout'),
+                        onRenew: () => context.push('/checkout'),
+                        onChange: () => context.push('/checkout'),
                       ),
                     ),
                     const _SectionTitle('Использование'),
@@ -2148,7 +2148,7 @@ class _AboutFooter extends StatelessWidget {
           ),
           const SizedBox(height: PyDS.sp2 + 2),
           TextButton(
-            onPressed: () => context.go('/licenses'),
+            onPressed: () => context.push('/licenses'),
             style: TextButton.styleFrom(
               minimumSize: const Size(0, 28),
               padding: const EdgeInsets.symmetric(horizontal: 12),
