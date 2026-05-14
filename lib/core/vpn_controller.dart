@@ -361,9 +361,15 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
 
   /// Запрашивает последние Xray logs от плагина для UI debug-screen.
   /// Возвращает пустой список при ошибке (например, plugin не инициализирован).
+  /// 3-сек timeout — _v2ray.getLogs() это MethodChannel call который
+  /// может блокировать main thread (ANR) если plugin's worker process
+  /// занят Xray handshake'ом.
   Future<List<String>> fetchLogs() async {
     try {
-      return await _v2ray.getLogs();
+      return await _v2ray.getLogs().timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => ['(getLogs timeout — plugin busy, попробуй позже)'],
+      );
     } catch (_) {
       return [];
     }
@@ -429,6 +435,16 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     // на Android 16 при первом acceptance test.
     final cleanJson = parsed.getFullConfiguration();
     final configMap = jsonDecode(cleanJson) as Map<String, dynamic>;
+
+    // Поднимаем log level до 'debug' — Xray начнёт писать detail'ы
+    // handshake'а (TCP connect, TLS, Reality auth). Это нужно для
+    // диагностики «вечного connecting» — мы видим где handshake
+    // застрял или какие frames Xray отправляет.
+    configMap['log'] = <String, dynamic>{
+      'loglevel': 'debug',
+      'access': '',
+      'error': '',
+    };
 
     // Routing: RU bypass для приватных IP (localhost / 192.168 / 10.x).
     //
