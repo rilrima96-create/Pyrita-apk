@@ -32,7 +32,8 @@
     <application
         android:label="Pyrita"
         android:name="${applicationName}"
-        android:enableOnBackInvokedCallback="true">
+        android:enableOnBackInvokedCallback="true"
+        android:extractNativeLibs="true">
 
         <activity
             android:name=".MainActivity"
