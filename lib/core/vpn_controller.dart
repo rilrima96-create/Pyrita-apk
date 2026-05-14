@@ -477,23 +477,31 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     // Plugin's libv2ray.aar v26.4.17 должна support XTLS — verified что
     // Xray Go binary стартует и pipes traffic через uplink.
 
-    // Routing: RU bypass для приватных IP (localhost / 192.168 / 10.x).
+    // Routing:
     //
-    // ВАЖНО: geosite:ru правило УБРАНО — plugin bundles geosite.dat
-    // без поддержки RU-кода (Xray crash на startup с
-    // 'failed to check code RU from geosite.dat > EOF'). Verified
-    // через диалог-диагностику в acceptance test.
+    // 1. UDP/443 → blackhole. КРИТИЧЕСКИ ВАЖНО для XTLS Vision.
+    //    XTLS-Vision (flow=xtls-rprx-vision) поддерживает ТОЛЬКО TCP.
+    //    UDP/443 (QUIC / HTTP/3) отвергается с ошибкой
+    //    'XTLS rejected UDP/443 traffic' — браузер hangs пытаясь
+    //    HTTP/3 first. Hiddify применяет тот же block.
+    //    После block браузер fallback'нет на TCP/443 (regular HTTPS),
+    //    которое идёт через XTLS Vision успешно.
     //
-    // geoip:ru тоже не используется по той же причине (geoip.dat может
-    // быть несовместим). Только loopback/private + default proxy.
+    // 2. Private IPs → direct (localhost, LAN).
     //
-    // Это значит yandex.ru / sberbank.ru / gosuslugi.ru пойдут ЧЕРЕЗ
-    // VPN-туннель — банк может REJECT FI IP. Phase D — добавить
-    // bundled свежие geo files в app assets и копировать в filesDir
-    // на первом запуске.
+    // 3. Всё остальное → proxy (VPN tunnel).
+    //
+    // geosite:ru / geoip:ru правила УБРАНЫ — plugin bundles geo.dat
+    // несовместимый с Xray 26.4 'failed to check code RU > EOF'.
     configMap['routing'] = <String, dynamic>{
       'domainStrategy': 'AsIs',
       'rules': [
+        {
+          'type': 'field',
+          'network': 'udp',
+          'port': '443',
+          'outboundTag': 'blackhole',
+        },
         {
           'type': 'field',
           'ip': ['geoip:private'],
