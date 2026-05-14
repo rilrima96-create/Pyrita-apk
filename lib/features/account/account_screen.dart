@@ -255,10 +255,9 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                       ),
                       child: Text(
                         'Pyrita раздаёт подписку со всеми доступными '
-                        'протоколами. Активный выбирается клиентом '
-                        'автоматически — Hiddify / sing-box подберут '
-                        'самый быстрый из живых. Ручной выбор появится '
-                        'когда подключим встроенный VPN-движок (Phase C).',
+                        'протоколами. На этом устройстве активен VLESS Reality — '
+                        'основной протокол с DPI-устойчивым handshake. '
+                        'Возможность ручного переключения появится позже.',
                         style: TextStyle(
                           fontSize: 11.5,
                           color: PyDS.textFaint,
@@ -1344,8 +1343,9 @@ class _PaymentRow extends StatelessWidget {
   }
 }
 
-/// Список устройств юзера — Pyrita app, Hiddify на других гаджетах, etc.
-/// Самое свежее устройство (last_seen) идёт первым с подписью «(это устройство)».
+/// Список устройств юзера — Pyrita app + другие VPN-клиенты на гаджетах,
+/// если юзер скопировал подписку в их. Самое свежее устройство (last_seen)
+/// идёт первым с подписью «(это устройство)».
 class _DevicesList extends StatelessWidget {
   const _DevicesList({required this.list});
 
@@ -1837,8 +1837,9 @@ class _SubscriptionLinkCardState extends State<_SubscriptionLinkCard> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'Для Hiddify, sing-box на ноутбуке или планшете. Этот телефон '
-            'использует ссылку автоматически.',
+            'Если хотите использовать Pyrita на других устройствах (ноутбук, '
+            'планшет) — скопируйте эту ссылку в свой VPN-клиент. На этом '
+            'телефоне Pyrita сама подключается, копировать не нужно.',
             style: PyDS.font(
               size: 11.5,
               weight: FontWeight.w500,
@@ -2110,7 +2111,7 @@ class _AboutFooter extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(
-            'Pyrita Android · v0.0.4 (4)',
+            'Pyrita Android · v0.1.0',
             style: PyDS.font(
               size: 10.5,
               weight: FontWeight.w600,
@@ -2125,6 +2126,22 @@ class _AboutFooter extends StatelessWidget {
               size: 10.5,
               weight: FontWeight.w500,
               color: PyDS.textFaint,
+            ),
+          ),
+          const SizedBox(height: PyDS.sp2 + 2),
+          TextButton(
+            onPressed: () => context.go('/licenses'),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 28),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+            child: Text(
+              'Открытые лицензии',
+              style: PyDS.font(
+                size: 11,
+                weight: FontWeight.w600,
+                color: PyDS.goldLight,
+              ),
             ),
           ),
         ],

@@ -281,8 +281,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           'Pyrita не получила разрешение на VPN.\n\n'
           'Возможные причины:\n'
           '• Вы отказали в системном окне\n'
-          '• На устройстве активен другой VPN (Hiddify, '
-          'AmneziaVPN и т.п.) — отключите его и попробуйте снова',
+          '• На устройстве активен другой VPN — '
+          'отключите его в настройках и попробуйте ещё раз',
           style: PyDS.font(
             size: 13.5,
             weight: FontWeight.w500,
@@ -727,6 +727,16 @@ class _StatRow extends StatelessWidget {
     return mbps.toStringAsFixed(1);
   }
 
+  /// Plugin даёт duration в HH:MM:SS. Для tile с маленькой шириной
+  /// показываем MM:SS если меньше часа, иначе HH:MM.
+  String _shortDuration(String hhmmss) {
+    final parts = hhmmss.split(':');
+    if (parts.length != 3) return hhmmss;
+    final h = int.tryParse(parts[0]) ?? 0;
+    if (h == 0) return '${parts[1]}:${parts[2]}';
+    return '${parts[0]}:${parts[1]}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final on = status.isConnected;
@@ -750,13 +760,12 @@ class _StatRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: PyDS.sp2),
-        // Phase C: «Заблокировано» — заглушка. Real-counter возможен только
-        // когда Xray-core stats покажут rules-match'и (Phase D).
+        // Время текущей сессии (HH:MM:SS от плагина). В idle — прочерк.
         Expanded(
           child: _StatTile(
-            icon: Icons.shield_outlined,
-            label: 'Защищено',
-            value: on ? '✓' : '—',
+            icon: Icons.timer_outlined,
+            label: 'Сессия',
+            value: on ? _shortDuration(status.duration) : '—',
             unit: '',
             color: PyDS.on,
           ),
