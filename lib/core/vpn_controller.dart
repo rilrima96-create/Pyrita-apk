@@ -446,6 +446,38 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       'error': '',
     };
 
+    // PLUGIN BUG WORKAROUND (issue #25 flutter_v2ray_client):
+    // libv2ray.aar в plugin v3.2.0 имеет проблему с VLESS+XTLS
+    // flow=xtls-rprx-vision — handshake completes, но трафик не
+    // proxy'ится → state stuck в connecting навсегда.
+    // Отключаем XTLS flow → basic VLESS+Reality (без XTLS speed
+    // optimization, но проще на native side).
+    final outbounds = configMap['outbounds'] as List?;
+    if (outbounds != null) {
+      for (final out in outbounds) {
+        if (out is Map && out['tag'] == 'proxy') {
+          final settings = out['settings'];
+          if (settings is Map) {
+            final vnext = settings['vnext'];
+            if (vnext is List && vnext.isNotEmpty) {
+              final firstVnext = vnext[0];
+              if (firstVnext is Map) {
+                final users = firstVnext['users'];
+                if (users is List && users.isNotEmpty) {
+                  final firstUser = users[0];
+                  if (firstUser is Map) {
+                    // Снимаем XTLS flow — оставляем VLESS encrypt 'none'
+                    // и обычный Reality handshake без XTLS-vision.
+                    firstUser['flow'] = '';
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
     // Routing: RU bypass для приватных IP (localhost / 192.168 / 10.x).
     //
     // ВАЖНО: geosite:ru правило УБРАНО — plugin bundles geosite.dat
