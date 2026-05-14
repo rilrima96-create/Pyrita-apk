@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Notification small icon для Pyrita VpnService.
+
+    Android требует для notification status bar icon:
+      - Только white-on-transparent (monochrome)
+      - Простая силуэт-форма (24dp viewport)
+      - Adaptive icons / coloured PNG отображаются как белый квадрат
+
+    Это VectorDrawable hexagon — символ Pyrita (золотое колесо с гранью).
+    В status bar / lockscreen рендерится белым (Android применяет tint).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Hexagon outer + inner glyph (Pyrita-style) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,2 L20.66,7 L20.66,17 L12,22 L3.34,17 L3.34,7 Z" />
+
+    <!-- Inner cutout to make it look like a ring (transparent hex inside) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF14100C"
+        android:strokeWidth="0.6"
+        android:pathData="M12,5.5 L18,9 L18,15 L12,18.5 L6,15 L6,9 Z" />
+</vector>

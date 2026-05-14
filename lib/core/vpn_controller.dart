@@ -131,11 +131,14 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   static const _prefKeyPermissionRequested = 'vpn_permission_requested';
 
   Future<void> _init() async {
-    // Notification icon — используем launcher-иконку приложения. Та же
-    // что в pubspec.yaml → flutter_launcher_icons → icon-b-pyrite.png.
+    // Notification icon — monochrome silhouette (drawable/ic_notification.xml).
+    // НЕ launcher icon: launcher это adaptive-with-background, Android
+    // показывает его в status bar как белый квадрат (некрасиво).
+    // ic_notification — VectorDrawable hexagon, рендерится корректно
+    // в notification bar / lockscreen / шторке.
     await _v2ray.initialize(
-      notificationIconResourceType: 'mipmap',
-      notificationIconResourceName: 'ic_launcher',
+      notificationIconResourceType: 'drawable',
+      notificationIconResourceName: 'ic_notification',
     );
   }
 
