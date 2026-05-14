@@ -74,15 +74,16 @@ dev_dependencies:
   flutter_launcher_icons: ^0.14.4
 
 # Конфиг flutter_launcher_icons. Источник — иконка варианта B (Pyrite)
-# из бренд-пакета. Adaptive icons (Android 8+): foreground = картинка
-# с прозрачным фоном-padding'ом, background = #0C0907 (PyDS.ink).
+# из бренд-пакета. Adaptive icons (Android 8+): foreground = «tight»
+# crop (PNG с safe-zone padding'ом — designer's intent), background =
+# #0C0907 (PyDS.ink). Legacy fallback (image_path) = wide crop.
 flutter_launcher_icons:
   android: true
   ios: false
   image_path: "assets/images/icon-b-pyrite.png"
   min_sdk_android: 24
   adaptive_icon_background: "#0C0907"
-  adaptive_icon_foreground: "assets/images/icon-b-pyrite.png"
+  adaptive_icon_foreground: "assets/images/icon-b-pyrite-tight.png"
   remove_alpha_ios: false
 
 flutter:
