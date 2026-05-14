@@ -1147,7 +1147,24 @@ class _ProtocolRow extends StatelessWidget {
     final isActive = info.active;
     final isAvailable = info.available;
 
-    return PyCard(
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        final msg = isActive
+            ? 'Это активный протокол — его использует VPN на этом устройстве.'
+            : isAvailable
+                ? 'Протокол готов на сервере. Ручное переключение появится в следующих версиях.'
+                : 'Протокол не настроен на сервере.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg, style: PyDS.font(size: 12.5, color: PyDS.text)),
+            backgroundColor: PyDS.bg2,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      },
+      child: PyCard(
       padding: const EdgeInsets.symmetric(
         horizontal: PyDS.sp3 + 2,
         vertical: PyDS.sp3 - 1,
@@ -1225,6 +1242,7 @@ class _ProtocolRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }
