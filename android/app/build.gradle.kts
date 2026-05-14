@@ -68,6 +68,20 @@ android {
             // engine'овые классы не вырезаются).
         }
     }
+
+    // Phase C: libtun2socks.so (bundled в jniLibs) запускается plugin'ом через
+    // ProcessBuilder — нужен реальный файл на disk в /data/app/<id>/lib/<arch>/.
+    // По default AGP 8+ packages .so compressed (extractNativeLibs=false) —
+    // .so загружаются в JVM напрямую без extract на disk. useLegacyPackaging=true
+    // форсирует extract при install.
+    //
+    // android:extractNativeLibs="true" в AndroidManifest IGNORED AGP 8+ —
+    // только эта gradle настройка работает.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 flutter {
