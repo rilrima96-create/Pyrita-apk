@@ -467,37 +467,15 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       }
     }
 
-    // PLUGIN BUG WORKAROUND #2 (issue #25 flutter_v2ray_client):
-    // libv2ray.aar в plugin v3.2.0 имеет проблему с VLESS+XTLS
-    // flow=xtls-rprx-vision — handshake completes, но трафик не
-    // proxy'ится → state stuck в connecting навсегда.
-    // Отключаем XTLS flow → basic VLESS+Reality (без XTLS speed
-    // optimization, но проще на native side).
-    final outbounds = configMap['outbounds'] as List?;
-    if (outbounds != null) {
-      for (final out in outbounds) {
-        if (out is Map && out['tag'] == 'proxy') {
-          final settings = out['settings'];
-          if (settings is Map) {
-            final vnext = settings['vnext'];
-            if (vnext is List && vnext.isNotEmpty) {
-              final firstVnext = vnext[0];
-              if (firstVnext is Map) {
-                final users = firstVnext['users'];
-                if (users is List && users.isNotEmpty) {
-                  final firstUser = users[0];
-                  if (firstUser is Map) {
-                    // Снимаем XTLS flow — оставляем VLESS encrypt 'none'
-                    // и обычный Reality handshake без XTLS-vision.
-                    firstUser['flow'] = '';
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
+    // REVERTED XTLS strip — VLESS+Reality сервер ожидает
+    // flow=xtls-rprx-vision как часть Reality протокола. Strip ломает
+    // handshake silent — server reject'ит non-XTLS клиента fail-closed.
+    // Симптом: tunnel up, Xray proxy logs идут, но никакой response от
+    // server'а — browser hangs «Соединение прервано».
+    //
+    // Sticking with flow=xtls-rprx-vision (preserved from subscription URL).
+    // Plugin's libv2ray.aar v26.4.17 должна support XTLS — verified что
+    // Xray Go binary стартует и pipes traffic через uplink.
 
     // Routing: RU bypass для приватных IP (localhost / 192.168 / 10.x).
     //
