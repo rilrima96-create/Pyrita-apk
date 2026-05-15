@@ -1,34 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Notification small icon для Pyrita VpnService.
-
-    Android требования к notification status bar icon:
-      - Только white-on-transparent (monochrome)
-      - Простая силуэт-форма (24dp viewport)
-      - Adaptive icons / coloured PNG отображаются как белый квадрат
-
-    Это силуэт логомарка Pyrita — 7-куба isometric cluster из
-    pyrita-design-system/.../logo-mark.svg (3 верхних + центральный core
-    + 3 нижних). Каждый куб = hexagonal silhouette (top of cube
-    проецируется в шестиугольник в изометрии). Координаты scaled из
-    viewBox 0 0 96 96 → 24×24 (× 0.25). Все 7 hexagon'ов залиты белым
-    в едином path — Android применяет tint, рендерит чисто-белым в
-    status bar / lockscreen.
+  Pyrita notification icon.
+  Subject: isometric pyrite cube — three rhombic faces (top / left / right)
+  separated by hairline gaps forming a Y divider at the center.
+  Pure white, no strokes, no gradients. Reads at 16×16 status-bar size.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-
     <path
-        android:fillColor="#FFFFFFFF"
-        android:fillType="nonZero"
-        android:pathData="M10,4 L14,5.5 L14,8.5 L10,10 L6,8.5 L6,5.5 Z
-                          M5,7.5 L9,9 L9,12 L5,13.5 L1,12 L1,9 Z
-                          M19,7.5 L23,9 L23,12 L19,13.5 L15,12 L15,9 Z
-                          M12,10 L14.5,11 L14.5,13 L12,14 L9.5,13 L9.5,11 Z
-                          M7,13 L11,14.5 L11,18 L7,20 L3,18 L3,14.5 Z
-                          M12,14.5 L16,16 L16,19 L12,21 L8,19 L8,16 Z
-                          M17,13 L21,14.5 L21,18 L17,20 L13,18 L13,14.5 Z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,4.3 L18.4,8 L12,11.7 L5.6,8 Z M18.7,8.4 L18.7,15.9 L12.2,19.6 L12.2,12.2 Z M5.3,8.4 L11.8,12.2 L11.8,19.6 L5.3,15.9 Z" />
 </vector>
