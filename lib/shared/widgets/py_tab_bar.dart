@@ -5,9 +5,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme.dart';
 
-enum PyTab { home, account, billing }
+enum PyTab { home, account, billing, settings }
 
-/// Bottom-tab bar в стиле дизайна. 3 пункта: home / account / billing.
+/// Bottom-tab bar в стиле дизайна. 4 пункта: home / account / billing / settings.
 /// Активный — gold-pill подсветка + золотой icon/label.
 class PyTabBar extends StatelessWidget {
   const PyTabBar({super.key, required this.active});
@@ -25,9 +25,9 @@ class PyTabBar extends StatelessWidget {
             border: Border(top: BorderSide(color: PyDS.strokeSoft, width: 1)),
           ),
           padding: const EdgeInsets.fromLTRB(
-            PyDS.sp4,
             PyDS.sp3,
-            PyDS.sp4,
+            PyDS.sp3,
+            PyDS.sp3,
             PyDS.sp4,
           ),
           child: SafeArea(
@@ -57,6 +57,14 @@ class PyTabBar extends StatelessWidget {
                   iconActive: Icons.credit_card,
                   label: 'Оплата',
                   onTap: () => context.go('/checkout'),
+                ),
+                _TabItem(
+                  tab: PyTab.settings,
+                  active: active == PyTab.settings,
+                  icon: Icons.settings_outlined,
+                  iconActive: Icons.settings,
+                  label: 'Настройки',
+                  onTap: () => context.go('/settings'),
                 ),
               ],
             ),
