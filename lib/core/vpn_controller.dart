@@ -340,11 +340,24 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     _pingTimer?.cancel();
     _pingTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
       try {
-        final ms = await _v2ray.getConnectedServerDelay();
+        // Plugin default — https://google.com/generate_204 — блокирован
+        // RKN, через VPN handshake может fail. Используем Cloudflare
+        // (нейтральный, не в RU bypass'е, идёт через tunnel).
+        final ms = await _v2ray.getConnectedServerDelay(
+          url: 'https://cloudflare.com/cdn-cgi/trace',
+        );
         if (!mounted || !state.isConnected) return;
+        // Plugin возвращает -1 при timeout / failure. Не пишем такие в
+        // state — UI рендерит '—' если pingMs null, что точнее чем
+        // показывать -1.
+        if (ms <= 0) {
+          debugPrint('[VPN] ping returned $ms (timeout or error)');
+          return;
+        }
+        debugPrint('[VPN] ping=$ms ms');
         state = state.copyWith(serverPingMs: ms);
-      } catch (_) {
-        // Timeout / measurement error — игнорим, в следующий тик попробуем.
+      } catch (e) {
+        debugPrint('[VPN] ping exception: $e');
       }
     });
   }
@@ -557,12 +570,11 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     }
   }
 
-  /// Скачивает Pyrita sub URL, выбирает VLESS+Reality, строит JSON-config
-  /// для Xray-core с включёнными правилами RU-bypass.
-  ///
-  /// Pyrita backend (Marzban) возвращает либо base64-encoded плоский
-  /// список URL'ов (по одной строке), либо plain text. Поддерживаем оба.
-  Future<String> _buildXrayConfig(String subUrl) async {
+  /// Скачивает sub URL и возвращает плоский список parsable URL'ов.
+  /// Reusable helper — используется как _buildXrayConfig (полный config),
+  /// так и switchProtocol (pre-check что preferred protocol реально в
+  /// подписке, иначе backend кэширует stale `available=true` flag).
+  Future<List<String>> _fetchSubscriptionUrls(String subUrl) async {
     final dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 15),
@@ -583,6 +595,17 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     if (urls.isEmpty) {
       throw StateError('В подписке не найдено ни одного протокола');
     }
+    return urls;
+  }
+
+  /// Скачивает Pyrita sub URL, выбирает primary URL (с учётом
+  /// `preferred_protocol`), строит JSON-config для Xray-core с включёнными
+  /// правилами RU-bypass.
+  ///
+  /// Pyrita backend (Marzban) возвращает либо base64-encoded плоский
+  /// список URL'ов (по одной строке), либо plain text. Поддерживаем оба.
+  Future<String> _buildXrayConfig(String subUrl) async {
+    final urls = await _fetchSubscriptionUrls(subUrl);
 
     final preferred = await _getPreferredProtocol();
     final vlessUrl = _pickPrimaryUrl(urls, preferred: preferred);
@@ -850,6 +873,32 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       throw StateError(
         'Протокол ${entry.name} пока не поддерживается на этом устройстве. '
         'Появится в следующих версиях.',
+      );
+    }
+
+    // Pre-check: backend's `available` flag может быть stale — серверный
+    // catalog говорит «XHTTP доступен», но в base64-подписке его реально
+    // нет (backend B.1 task в pyrita-web repo). Без этой проверки
+    // switchProtocol успешно сохранил бы preference, restart'нул бы Xray,
+    // но `_pickPrimaryUrl` silently fallback'нул на Reality — юзер видит
+    // «переключился и через секунду вернулся на Reality».
+    try {
+      final me = await ApiClient.instance.getMe();
+      final subUrl = me['subscription_url'] as String?;
+      if (subUrl == null || subUrl.isEmpty) {
+        throw StateError('Не удалось получить subscription_url');
+      }
+      final urls = await _fetchSubscriptionUrls(subUrl);
+      final matched = _findByPreferred(urls, id);
+      if (matched == null) {
+        throw StateError(
+          '${entry.name} помечен как доступный, но сервер не положил его '
+          'в подписку. Сообщите в поддержку (Pyrita backend B.1 task).',
+        );
+      }
+    } on DioException {
+      throw StateError(
+        'Не удалось проверить подписку. Проверьте интернет и попробуйте снова.',
       );
     }
 

@@ -1331,6 +1331,15 @@ class _ProtocolRowState extends ConsumerState<_ProtocolRow> {
                         bg: PyDS.bg2,
                         fg: PyDS.textFaint,
                       )
+                    else if (!_switchableProtocolIds.contains(info.id))
+                      // Backend кладёт URL'ы для Hy2/TUIC в подписку, но
+                      // flutter_v2ray_client не имеет parser'а — реально
+                      // переключиться нельзя. Phase E добавит parsers.
+                      _ProtocolBadge(
+                        label: 'В РАЗРАБОТКЕ',
+                        bg: PyDS.bg2,
+                        fg: PyDS.textFaint,
+                      )
                     else
                       _ProtocolBadge(
                         label: 'ДОСТУПЕН',
