@@ -1,15 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/theme.dart';
 import '../../shared/widgets/py_app_icon.dart';
 import '../../shared/widgets/py_button.dart';
 
-/// Pre-onboarding-объяснение зачем Pyrita просит VPN-permission на Android.
+/// Pre-onboarding-объяснение зачем Pyrita просит permission'ы на Android.
 ///
 /// Показывается ОДИН раз перед первым тапом «Подключить» (флаг
 /// `vpn_permission_requested` в SharedPreferences). Если пользователь
-/// тапает «Продолжить» — caller вызывает `requestPermission()` и Android
-/// показывает свой system-dialog.
+/// тапает «Продолжить»:
+///   1. Запрашиваем POST_NOTIFICATIONS (Android 13+) — silent, если
+///      denied всё равно продолжаем (VPN работает, просто без видимого
+///      статуса в шторке).
+///   2. Caller (home_screen._toggle) вызывает `requestPermission()`
+///      для VpnService — Android показывает свой system-dialog
+///      «Разрешить Pyrita настраивать VPN?».
 ///
 /// Цель — снизить permission-deny rate для технически неподготовленных
 /// пользователей. Без объяснения system-dialog «Разрешить Pyrita
@@ -20,6 +26,23 @@ import '../../shared/widgets/py_button.dart';
 ///   * `false` или `null` — отмена / back swipe
 class VpnPermissionIntroScreen extends StatelessWidget {
   const VpnPermissionIntroScreen({super.key});
+
+  /// Просим POST_NOTIFICATIONS. На Android <13 permission auto-granted'ом
+  /// возвращается. На 13+ показывается system-prompt. Denied — fine,
+  /// VpnService всё равно стартует (foreground service не падает без
+  /// видимой notification, просто status bar пустой).
+  Future<void> _requestNotificationPermission() async {
+    final status = await Permission.notification.status;
+    if (!status.isGranted) {
+      await Permission.notification.request();
+    }
+  }
+
+  Future<void> _onContinue(BuildContext context) async {
+    await _requestNotificationPermission();
+    if (!context.mounted) return;
+    Navigator.of(context).pop(true);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -69,6 +92,11 @@ class VpnPermissionIntroScreen extends StatelessWidget {
                           title: 'Что увидите дальше',
                           items: [
                             _Item(
+                              icon: Icons.notifications_outlined,
+                              text: 'Запрос разрешения на уведомления — '
+                                  'чтобы вы видели в шторке что VPN активен.',
+                            ),
+                            _Item(
                               icon: Icons.shield_outlined,
                               text: 'Системный диалог Android: '
                                   '«Разрешить Pyrita настраивать VPN-соединение?»',
@@ -115,7 +143,7 @@ class VpnPermissionIntroScreen extends StatelessWidget {
                       PyButtonGold(
                         label: 'Понятно, продолжить',
                         fontSize: 16,
-                        onPressed: () => Navigator.of(context).pop(true),
+                        onPressed: () => _onContinue(context),
                       ),
                       const SizedBox(height: PyDS.sp2 + 2),
                       PyButtonGhost(

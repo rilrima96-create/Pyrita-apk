@@ -62,6 +62,12 @@ dependencies:
   # v7.x требует Flutter >=3.19.0 (наш CI ставит 3.41.9 — OK).
   connectivity_plus: ^7.1.1
 
+  # Phase D: runtime permission requests. Android 13+ требует явный
+  # POST_NOTIFICATIONS request — иначе VpnService показывает silent
+  # foreground service без видимой notification. Юзер не понимает что
+  # VPN работает.
+  permission_handler: ^11.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
