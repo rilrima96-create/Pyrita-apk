@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/api_client.dart';
 import '../../core/theme.dart';
+import '../../core/vpn_controller.dart';
 import '../../shared/widgets/py_app_icon.dart';
 import '../../shared/widgets/py_button.dart';
 import '../../shared/widgets/py_card.dart';
@@ -244,7 +245,10 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                     Padding(
                       padding: const EdgeInsets.symmetric(
                           horizontal: PyDS.sp4 + 2),
-                      child: _ProtocolList(protocols: _protocols),
+                      child: _ProtocolList(
+                        protocols: _protocols,
+                        onReload: _loadProtocols,
+                      ),
                     ),
                     const Padding(
                       padding: EdgeInsets.fromLTRB(
@@ -1097,9 +1101,17 @@ class _KV extends StatelessWidget {
 /// сервером (VLESS Reality — default). Phase C добавит возможность ручного
 /// переключения для встроенного sing-box клиента.
 class _ProtocolList extends StatelessWidget {
-  const _ProtocolList({required this.protocols});
+  const _ProtocolList({required this.protocols, required this.onReload});
 
   final List<ProtocolInfo>? protocols;
+
+  /// Callback после успешного switch'а — родительский screen должен
+  /// re-fetch'ить `/api/me/protocols` чтобы обновить active flag (Phase D
+  /// scope: active определяется client-side через preferred_protocol,
+  /// сервер всё ещё считает primary). Реально-то pwd обновится через
+  /// re-render потому что мы храним preferred в SharedPreferences и
+  /// читаем при build (см. _ProtocolList build).
+  final VoidCallback onReload;
 
   @override
   Widget build(BuildContext context) {
@@ -1130,40 +1142,141 @@ class _ProtocolList extends StatelessWidget {
       children: [
         for (int i = 0; i < list.length; i++) ...[
           if (i > 0) const SizedBox(height: PyDS.sp2),
-          _ProtocolRow(info: list[i]),
+          _ProtocolRow(info: list[i], catalog: list, onSwitched: onReload),
         ],
       ],
     );
   }
 }
 
-class _ProtocolRow extends StatelessWidget {
-  const _ProtocolRow({required this.info});
+/// Список protocol-id'шников которые plugin'у parseable и Pyrita-сервер
+/// реально кладёт в подписку. Используется в UI для preview "включён бы
+/// переключатель или disable'нут" — не делаем switchProtocol() round-trip
+/// для protocol'а который точно не работает.
+const _switchableProtocolIds = {'reality', 'xhttp'};
+
+class _ProtocolRow extends ConsumerStatefulWidget {
+  const _ProtocolRow({
+    required this.info,
+    required this.catalog,
+    required this.onSwitched,
+  });
 
   final ProtocolInfo info;
+  final List<ProtocolInfo> catalog;
+  final VoidCallback onSwitched;
+
+  @override
+  ConsumerState<_ProtocolRow> createState() => _ProtocolRowState();
+}
+
+class _ProtocolRowState extends ConsumerState<_ProtocolRow> {
+  bool _switching = false;
+
+  Future<void> _onTap() async {
+    if (_switching) return;
+    final info = widget.info;
+    // Client-side override: backend always reports Reality as primary,
+    // но если юзер switch'нул на XHTTP — реально-то active в Pyrita-app это
+    // XHTTP. См. PyritaVpnStatus.preferredProtocolId.
+    final preferred = ref.read(vpnControllerProvider).preferredProtocolId;
+    final isActive = info.id == preferred;
+    final isAvailable = info.available;
+
+    // Active → просто info snackbar.
+    if (isActive) {
+      _snack('Это активный протокол — его использует VPN на этом устройстве.');
+      return;
+    }
+
+    // !available → snackbar warning, не настроен на сервере.
+    if (!isAvailable) {
+      _snack('Протокол ${info.name} ещё не настроен на сервере.');
+      return;
+    }
+
+    // Available but not parseable клиентом → snackbar warning, Phase E.
+    if (!_switchableProtocolIds.contains(info.id)) {
+      _snack(
+        'Протокол ${info.name} пока не поддерживается на этом устройстве. '
+        'Появится в одной из следующих версий.',
+      );
+      return;
+    }
+
+    // Available & parseable → confirm dialog.
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Переключиться на ${info.name}?'),
+        content: const Text(
+          'VPN отключится и переподключится через 2-3 секунды. '
+          'Текущее подключение прервётся.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Переключиться'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _switching = true);
+    try {
+      final controller = ref.read(vpnControllerProvider.notifier);
+      final reconnected = await controller.switchProtocol(
+        info.id,
+        protocolsCatalog: widget.catalog,
+      );
+      if (!mounted) return;
+      _snack(
+        reconnected
+            ? 'Переключено на ${info.name}, переподключаемся…'
+            : 'Сохранено: при следующем подключении будет ${info.name}',
+      );
+      widget.onSwitched();
+    } on StateError catch (e) {
+      if (!mounted) return;
+      _snack(e.message, isError: true);
+    } catch (e) {
+      if (!mounted) return;
+      _snack('Не удалось переключить: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _switching = false);
+    }
+  }
+
+  void _snack(String msg, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: PyDS.font(size: 12.5, color: PyDS.text)),
+        backgroundColor: isError ? PyDS.danger : PyDS.bg2,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isActive = info.active;
+    final info = widget.info;
+    // ref.watch триггерит rebuild когда preferredProtocolId меняется
+    // (в switchProtocol()) → active state визуально обновляется без
+    // re-fetch'а /api/me/protocols.
+    final preferred =
+        ref.watch(vpnControllerProvider.select((s) => s.preferredProtocolId));
+    final isActive = info.id == preferred;
     final isAvailable = info.available;
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () {
-        final msg = isActive
-            ? 'Это активный протокол — его использует VPN на этом устройстве.'
-            : isAvailable
-                ? 'Протокол готов на сервере. Ручное переключение появится в следующих версиях.'
-                : 'Протокол не настроен на сервере.';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(msg, style: PyDS.font(size: 12.5, color: PyDS.text)),
-            backgroundColor: PyDS.bg2,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      },
+      onTap: _switching ? null : _onTap,
       child: PyCard(
       padding: const EdgeInsets.symmetric(
         horizontal: PyDS.sp3 + 2,

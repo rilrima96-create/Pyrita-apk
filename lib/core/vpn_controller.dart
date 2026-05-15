@@ -34,9 +34,17 @@ class PyritaVpnStatus {
     this.duration = '00:00:00',
     this.errorMessage,
     this.serverPingMs,
+    this.preferredProtocolId = 'reality',
   });
 
   final PyritaVpnState state;
+
+  /// Текущий preferred protocol id (см. `/api/me/protocols` для catalog).
+  /// Default 'reality'. Меняется через `VpnController.switchProtocol()`.
+  /// UI использует чтобы отрисовать который protocol реально active в
+  /// Pyrita-app — backend всегда говорит "Reality primary", это поле —
+  /// клиентский override.
+  final String preferredProtocolId;
 
   /// Текущая скорость отдачи, байт/сек.
   final int uploadSpeed;
@@ -74,6 +82,7 @@ class PyritaVpnStatus {
     String? duration,
     String? errorMessage,
     int? serverPingMs,
+    String? preferredProtocolId,
   }) {
     return PyritaVpnStatus(
       state: state ?? this.state,
@@ -84,6 +93,7 @@ class PyritaVpnStatus {
       duration: duration ?? this.duration,
       errorMessage: errorMessage ?? this.errorMessage,
       serverPingMs: serverPingMs ?? this.serverPingMs,
+      preferredProtocolId: preferredProtocolId ?? this.preferredProtocolId,
     );
   }
 }
@@ -129,6 +139,22 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   bool _wasConnectedBeforeNetLoss = false;
 
   static const _prefKeyPermissionRequested = 'vpn_permission_requested';
+
+  /// SharedPreferences key для предпочитаемого протокола. Один из id'шников
+  /// из `/api/me/protocols` (см. ProtocolInfo.id):
+  ///   * `'reality'`   — VLESS+Reality (default, DPI-устойчивый)
+  ///   * `'xhttp'`     — VLESS+XHTTP (если backend начнёт класть в подписку)
+  ///   * `'hysteria2'` — Hy2 (currently плагин не парсит — fallback на reality)
+  ///   * `'tuic'`      — TUIC (currently плагин не парсит — fallback на reality)
+  ///   * `'ss2022'`    — Shadowsocks 2022 (плагин парсит ss://, но AEAD-2022
+  ///                     ключи могут нужно дополнительной обработки)
+  ///
+  /// Phase D scope: реально переключаемся только между protocol которые
+  /// одновременно (а) есть в подписке Marzban'а и (б) parseFromURL не
+  /// бросает ArgumentError. Если preferred недоступен → fallback на Reality
+  /// с snackbar-warning'ом из UI слоя.
+  static const _prefKeyPreferredProtocol = 'preferred_protocol';
+  static const _defaultProtocol = 'reality';
 
   /// Курированный список RU-доменов которые должны идти direct (без VPN
   /// туннеля). Без этого банки / госуслуги / маркетплейсы видят финский IP
@@ -270,6 +296,13 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       notificationIconResourceType: 'drawable',
       notificationIconResourceName: 'ic_notification',
     );
+
+    // Hydrate preferredProtocolId из SharedPreferences. До первой записи
+    // (юзер не switch'ал protocol) — default 'reality'.
+    final preferred = await _getPreferredProtocol();
+    if (mounted) {
+      state = state.copyWith(preferredProtocolId: preferred);
+    }
   }
 
   void _onStatusChanged(V2RayStatus s) {
@@ -551,7 +584,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       throw StateError('В подписке не найдено ни одного протокола');
     }
 
-    final vlessUrl = _pickPrimaryUrl(urls);
+    final preferred = await _getPreferredProtocol();
+    final vlessUrl = _pickPrimaryUrl(urls, preferred: preferred);
 
     // Парсинг через factory плагина — определяет протокол по prefix.
     // Для VLESS+Reality возвращает `VlessURL` с заполненными
@@ -682,39 +716,161 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
         .toList();
   }
 
-  /// Выбирает primary URL из списка. Phase C поддерживает:
-  ///   1. VLESS+Reality (highest priority — primary protocol)
-  ///   2. VLESS+XHTTP — fallback на случай если backend начнёт его класть
-  ///      в подписку (сейчас нет: legacy base64 не содержит xhttp URL,
-  ///      Hiddify его не понимает, Pyrita backend пока его выдаёт только
-  ///      через /api/me/protocols, а не в /api/sub). Branch на будущее.
-  ///   3. Любой VLESS (last resort)
+  /// Выбирает primary URL из списка с учётом preferred protocol.
   ///
-  /// Hysteria 2 / TUIC / SS-2022 не используем в Phase C — нет parser'а
-  /// в плагине (отложено в Phase D).
-  String _pickPrimaryUrl(List<String> urls) {
-    // 1. VLESS Reality
+  /// Phase D: реально parsable плагином → vless / vmess / trojan / ss /
+  /// socks. Hy2 / TUIC требуют custom parser (Phase E).
+  ///
+  /// Алгоритм:
+  ///   1. Если `preferred` указан и matching URL есть в подписке —
+  ///      берём его (например 'xhttp' → vless+type=xhttp URL).
+  ///   2. Если preferred недоступен (или 'reality' = default) →
+  ///      приоритет: VLESS Reality > VLESS XHTTP > любой VLESS.
+  ///   3. Если VLESS нет вовсе → fallback на любой parseable
+  ///      (vmess/trojan/ss/socks) — это «recovery mode» если backend
+  ///      сменил основной протокол.
+  String _pickPrimaryUrl(List<String> urls, {String preferred = _defaultProtocol}) {
+    // Step 1: попробовать matching preferred (если не default).
+    if (preferred != _defaultProtocol) {
+      final matched = _findByPreferred(urls, preferred);
+      if (matched != null) return matched;
+      // Preferred unavailable — fallback на стандартный порядок.
+    }
+
+    // Step 2: VLESS Reality (default primary).
     final reality = urls.firstWhere(
       (u) => u.startsWith('vless://') && u.contains('security=reality'),
       orElse: () => '',
     );
     if (reality.isNotEmpty) return reality;
 
-    // 2. VLESS XHTTP
+    // Step 3: VLESS XHTTP.
     final xhttp = urls.firstWhere(
       (u) => u.startsWith('vless://') && u.contains('type=xhttp'),
       orElse: () => '',
     );
     if (xhttp.isNotEmpty) return xhttp;
 
-    // 3. Любой VLESS
-    return urls.firstWhere(
+    // Step 4: Любой VLESS.
+    final anyVless = urls.firstWhere(
       (u) => u.startsWith('vless://'),
+      orElse: () => '',
+    );
+    if (anyVless.isNotEmpty) return anyVless;
+
+    // Step 5: Recovery mode — любой parseable URL (если backend сменил
+    // primary protocol на trojan/ss/vmess — клиент пытается подключиться
+    // через него вместо упорного crash'а с «VLESS не найден»).
+    final anyParseable = urls.firstWhere(
+      (u) =>
+          u.startsWith('vmess://') ||
+          u.startsWith('trojan://') ||
+          u.startsWith('ss://'),
       orElse: () => throw StateError(
-        'В подписке не нашли VLESS — embedded клиент не сможет подключиться',
+        'В подписке нет ни одного протокола который умеет наш клиент',
       ),
     );
+    return anyParseable;
   }
+
+  /// Маппинг protocol-id (из `/api/me/protocols`) → URL filter в base64-
+  /// подписке. Возвращает первый matching URL или `null` если такого
+  /// нет (тогда caller fallback'нет на default order).
+  String? _findByPreferred(List<String> urls, String preferred) {
+    bool match(String u) {
+      switch (preferred) {
+        case 'reality':
+          return u.startsWith('vless://') && u.contains('security=reality');
+        case 'xhttp':
+          return u.startsWith('vless://') && u.contains('type=xhttp');
+        case 'ss2022':
+          // Shadowsocks 2022 — может маркироваться как ss:// с 2022-blake3-*
+          // method. Plugin shadowsocks.dart парсит ss:// generic, но 2022
+          // method ciphers могут потребовать дополнительной отладки.
+          return u.startsWith('ss://');
+        case 'hysteria2':
+        case 'tuic':
+          // Custom protocols — plugin их не парсит. Возвращаем null,
+          // caller fallback'нет на default. UI слой должен ДО switchProtocol
+          // проверить что preferred parseable.
+          return false;
+        default:
+          return false;
+      }
+    }
+
+    final found = urls.firstWhere(match, orElse: () => '');
+    return found.isEmpty ? null : found;
+  }
+
+  /// Читает preferred protocol id из SharedPreferences. Возвращает
+  /// `_defaultProtocol` ('reality') если ничего не сохранено.
+  Future<String> _getPreferredProtocol() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_prefKeyPreferredProtocol) ?? _defaultProtocol;
+  }
+
+  /// Сохраняет preferred protocol id. Caller должен gracefully fallback'ать
+  /// если protocol недоступен в подписке (UI dialog).
+  Future<void> _setPreferredProtocol(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefKeyPreferredProtocol, id);
+  }
+
+  /// Переключает preferred protocol. Если currently connected — gracefully
+  /// reconnect через 1.5 сек (даёт Xray time на cleanup TUN-interface'а).
+  ///
+  /// `protocolsCatalog` — список доступных протоколов из `/api/me/protocols`.
+  /// Используется для validation: если `id` не в catalog или `!available`,
+  /// throws StateError с понятным message'ом — UI ловит и показывает
+  /// snackbar «Этот протокол не доступен».
+  ///
+  /// Returns:
+  ///   * `true` — switched successfully (reconnected if was connected)
+  ///   * `false` — switched but не reconnect'или (был disconnected)
+  Future<bool> switchProtocol(
+    String id, {
+    required List<ProtocolInfo> protocolsCatalog,
+  }) async {
+    final entry = protocolsCatalog.firstWhere(
+      (p) => p.id == id,
+      orElse: () => throw StateError('Неизвестный протокол: $id'),
+    );
+    if (!entry.available) {
+      throw StateError(
+        'Протокол ${entry.name} ещё не настроен на сервере. '
+        'Pyrita-сервер не положил его в подписку.',
+      );
+    }
+    // Plugin's parseFromURL поддерживает только vless / vmess / trojan / ss /
+    // socks. Hy2 / TUIC требуют custom parser (Phase E). Блокируем
+    // переключение чтобы не получить crash в _buildXrayConfig.
+    const parseable = {'reality', 'xhttp', 'ss2022'};
+    if (!parseable.contains(id)) {
+      throw StateError(
+        'Протокол ${entry.name} пока не поддерживается на этом устройстве. '
+        'Появится в следующих версиях.',
+      );
+    }
+
+    await _setPreferredProtocol(id);
+    state = state.copyWith(preferredProtocolId: id);
+
+    // Если connected → reconnect c новым preferred. Cache invalidate'ится
+    // потому что full start() заново строит config.
+    if (state.isConnected) {
+      await stop();
+      await Future.delayed(const Duration(milliseconds: 1500));
+      _lastConfigForReconnect = null; // force rebuild
+      await start();
+      return true;
+    }
+    return false;
+  }
+
+  /// Текущий preferred protocol id (для UI active-state). Async чтобы не
+  /// блокировать build на SharedPreferences.
+  Future<String> get preferredProtocol => _getPreferredProtocol();
 
   String _humanizeError(Object e) {
     if (e is ApiException) return e.message;
