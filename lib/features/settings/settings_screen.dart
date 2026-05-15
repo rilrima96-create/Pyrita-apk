@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api_client.dart';
 import '../../core/theme.dart';
+import '../../core/update_service.dart';
 import '../../core/vpn_controller.dart';
 import '../../shared/widgets/py_button.dart';
 import '../../shared/widgets/py_card.dart';
@@ -130,6 +131,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         onRegenerated: _loadMe,
                       ),
                     ),
+                    const _SectionTitle('Обновление'),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
+                      child: _UpdateCard(),
+                    ),
                     const _SectionTitle('Помощь'),
                     Padding(
                       padding: const EdgeInsets.symmetric(
@@ -232,6 +238,313 @@ class _SectionTitle extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Обновление — in-app update flow через GitHub Releases.
+// ──────────────────────────────────────────────────────────────────────
+
+class _UpdateCard extends StatefulWidget {
+  const _UpdateCard();
+
+  @override
+  State<_UpdateCard> createState() => _UpdateCardState();
+}
+
+class _UpdateCardState extends State<_UpdateCard> {
+  /// `null` пока ещё не делали check / нет результата.
+  /// `info.hasUpdate=false` — версия актуальна.
+  /// `info.hasUpdate=true` — есть update.
+  UpdateInfo? _info;
+
+  /// Состояние: 'idle' / 'checking' / 'downloading' / 'installing' / 'error'.
+  String _phase = 'idle';
+
+  /// Progress только когда `_phase == 'downloading'`.
+  UpdateProgress? _progress;
+
+  /// Понятное юзеру сообщение об ошибке.
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // Silent check при открытии Settings — если update есть, сразу
+    // показываем плашку. Если нет — нет visual change, юзер ничего
+    // не теряет.
+    _check();
+  }
+
+  Future<void> _check() async {
+    if (!mounted) return;
+    setState(() {
+      _phase = 'checking';
+      _error = null;
+    });
+    final info = await UpdateService.instance.checkForUpdate();
+    if (!mounted) return;
+    setState(() {
+      _info = info;
+      _phase = 'idle';
+      if (info == null) {
+        _error =
+            'Не удалось проверить обновления. Проверьте интернет.';
+      }
+    });
+  }
+
+  Future<void> _updateNow() async {
+    final info = _info;
+    if (info == null || !info.hasUpdate) return;
+
+    setState(() {
+      _phase = 'downloading';
+      _error = null;
+      _progress = UpdateProgress(received: 0, total: info.assetSizeBytes);
+    });
+
+    try {
+      final apk = await UpdateService.instance.downloadApk(
+        info,
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+      );
+      if (!mounted) return;
+      setState(() => _phase = 'installing');
+      await UpdateService.instance.installApk(apk);
+      // После installApk Android открыл system installer. App может
+      // остаться в этом state'е пока юзер не tap'нет «Установить».
+      // Если он успешно установит — наш process убьётся; если cancel'нёт,
+      // user вернётся в Settings и увидит ещё «Установка…» — сбрасываем.
+      if (mounted) {
+        setState(() => _phase = 'idle');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _phase = 'error';
+        _error = 'Не удалось обновить: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final info = _info;
+    final hasUpdate = info?.hasUpdate ?? false;
+
+    return PyCard(
+      padding: const EdgeInsets.all(PyDS.sp4),
+      radius: PyDS.rMd,
+      border: hasUpdate
+          ? Border.all(color: PyDS.strokeStrong, width: 1.5)
+          : Border.all(color: PyDS.stroke),
+      gradient: hasUpdate
+          ? const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0x1FF5DDA3), Color(0x05C9A875)],
+            )
+          : null,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_phase == 'checking') ...[
+            Row(
+              children: [
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: PyDS.goldLight,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Проверяем обновления…',
+                  style: PyDS.font(
+                    size: 13,
+                    weight: FontWeight.w600,
+                    color: PyDS.text,
+                  ),
+                ),
+              ],
+            ),
+          ] else if (_phase == 'downloading') ...[
+            Text(
+              'Скачиваем v${info?.latestVersion ?? "…"}',
+              style: PyDS.font(
+                size: 13,
+                weight: FontWeight.w700,
+                color: PyDS.text,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${_humanSize(_progress?.received ?? 0)} / '
+              '${_humanSize(_progress?.total ?? 0)}'
+              ' · ${_progress?.percent ?? 0}%',
+              style: PyDS.font(
+                size: 11,
+                weight: FontWeight.w500,
+                color: PyDS.textFaint,
+                mono: true,
+              ),
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(PyDS.rPill),
+              child: LinearProgressIndicator(
+                value: _progress?.fraction ?? 0,
+                minHeight: 4,
+                backgroundColor: const Color(0x1AF5DDA3),
+                valueColor: const AlwaysStoppedAnimation(PyDS.goldLight),
+              ),
+            ),
+          ] else if (_phase == 'installing') ...[
+            Text(
+              'Открываем системный установщик…',
+              style: PyDS.font(
+                size: 13,
+                weight: FontWeight.w600,
+                color: PyDS.text,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Android попросит подтвердить установку. '
+              'Дайте разрешение на установку из неизвестных источников '
+              'если запросит (один раз).',
+              style: PyDS.font(
+                size: 11.5,
+                weight: FontWeight.w500,
+                height: 1.4,
+                color: PyDS.textFaint,
+              ),
+            ),
+          ] else if (hasUpdate) ...[
+            Row(
+              children: [
+                const Icon(Icons.system_update_alt,
+                    size: 18, color: PyDS.goldLight),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Доступна версия ${info!.tagName}',
+                    style: PyDS.font(
+                      size: 14,
+                      weight: FontWeight.w800,
+                      color: PyDS.text,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Текущая: v${info.currentVersion} → новая: v${info.latestVersion}',
+              style: PyDS.font(
+                size: 11.5,
+                weight: FontWeight.w500,
+                color: PyDS.textSoft,
+              ),
+            ),
+            if (info.releaseNotes.isNotEmpty) ...[
+              const SizedBox(height: PyDS.sp2),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: PyDS.bg,
+                  borderRadius: BorderRadius.circular(PyDS.rSm),
+                  border: Border.all(color: PyDS.strokeSoft),
+                ),
+                child: Text(
+                  _trimNotes(info.releaseNotes),
+                  style: PyDS.font(
+                    size: 11.5,
+                    weight: FontWeight.w500,
+                    height: 1.4,
+                    color: PyDS.textSoft,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: PyDS.sp3),
+            PyButtonGold(
+              label: 'Обновить — ${_humanSize(info.assetSizeBytes)}',
+              icon: const Icon(Icons.download_rounded,
+                  size: 16, color: Color(0xFF1A140A)),
+              height: 44,
+              fontSize: 13.5,
+              onPressed: _updateNow,
+            ),
+          ] else if (info != null) ...[
+            Row(
+              children: [
+                const Icon(Icons.check_circle_outline,
+                    size: 18, color: PyDS.on),
+                const SizedBox(width: 8),
+                Text(
+                  'Установлена последняя версия',
+                  style: PyDS.font(
+                    size: 13,
+                    weight: FontWeight.w700,
+                    color: PyDS.text,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'v${info.currentVersion} — актуально',
+              style: PyDS.font(
+                size: 11.5,
+                weight: FontWeight.w500,
+                color: PyDS.textFaint,
+              ),
+            ),
+          ] else ...[
+            // Error / no info yet.
+            Text(
+              _error ?? 'Нажмите чтобы проверить обновления',
+              style: PyDS.font(
+                size: 12.5,
+                weight: FontWeight.w500,
+                height: 1.4,
+                color: _error != null ? PyDS.danger : PyDS.textSoft,
+              ),
+            ),
+            const SizedBox(height: PyDS.sp2 + 2),
+            PyButtonGhost(
+              label: 'Проверить обновления',
+              onPressed: _check,
+              height: 40,
+              fontSize: 13,
+              color: PyDS.goldLight,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// '1234567' → '1.18 МБ'. Short human-readable.
+  static String _humanSize(int bytes) {
+    if (bytes < 1024) return '$bytes Б';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} КБ';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} МБ';
+  }
+
+  /// Trim release notes до первых ~200 символов — карточка не должна
+  /// растягиваться на весь экран.
+  static String _trimNotes(String body) {
+    final cleaned = body.trim();
+    if (cleaned.length <= 200) return cleaned;
+    return '${cleaned.substring(0, 200).trim()}…';
   }
 }
 

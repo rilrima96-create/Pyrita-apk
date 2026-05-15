@@ -1,0 +1,227 @@
+import 'dart:io';
+
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
+
+/// Информация о доступном update'е, возвращаемая `UpdateService.checkForUpdate()`.
+@immutable
+class UpdateInfo {
+  const UpdateInfo({
+    required this.currentVersion,
+    required this.latestVersion,
+    required this.tagName,
+    required this.releaseUrl,
+    required this.assetUrl,
+    required this.assetSizeBytes,
+    required this.releaseNotes,
+  });
+
+  /// Текущая version из pubspec.yaml (e.g. '0.1.0').
+  final String currentVersion;
+
+  /// Latest tag без префикса 'v' (e.g. '0.1.0').
+  final String latestVersion;
+
+  /// Original tag_name (e.g. 'v0.1.0') — для display.
+  final String tagName;
+
+  /// HTML URL release-страницы на GitHub. Fallback если download fails.
+  final String releaseUrl;
+
+  /// Direct download URL для arm64 APK.
+  final String assetUrl;
+
+  /// Размер APK в байтах (для UI progress).
+  final int assetSizeBytes;
+
+  /// Markdown-текст из release notes. Если пусто — show generic.
+  final String releaseNotes;
+
+  bool get hasUpdate => _isLater(latestVersion, currentVersion);
+
+  /// Compare semver-like versions. `a > b` → true.
+  /// Простое сравнение по dot-separated integers. Не handles pre-release tags
+  /// (alpha/beta) — для наших целей достаточно.
+  static bool _isLater(String a, String b) {
+    final aParts = a.split('.').map((s) => int.tryParse(s) ?? 0).toList();
+    final bParts = b.split('.').map((s) => int.tryParse(s) ?? 0).toList();
+    final maxLen = aParts.length > bParts.length ? aParts.length : bParts.length;
+    while (aParts.length < maxLen) {
+      aParts.add(0);
+    }
+    while (bParts.length < maxLen) {
+      bParts.add(0);
+    }
+    for (var i = 0; i < maxLen; i++) {
+      if (aParts[i] > bParts[i]) return true;
+      if (aParts[i] < bParts[i]) return false;
+    }
+    return false;
+  }
+}
+
+/// Progress event для downloadApk stream.
+@immutable
+class UpdateProgress {
+  const UpdateProgress({required this.received, required this.total});
+  final int received;
+  final int total;
+  double get fraction => total > 0 ? received / total : 0;
+  int get percent => (fraction * 100).round();
+}
+
+/// Сервис проверки и установки обновлений приложения.
+///
+/// Логика:
+///   1. `checkForUpdate()` — GET https://api.github.com/repos/.../releases/latest
+///      без аутентификации (60 req/hour на IP — OK для редкого checking).
+///      Распарсить tag_name, найти `app-arm64-v8a-release.apk` asset.
+///   2. `downloadApk(info, onProgress)` — Dio download в getExternalCacheDir()
+///      (внешний кэш auto-cleanup'ится Android'ом, и FileProvider может
+///      его читать).
+///   3. `installApk(file)` — `open_filex.open()` → Android ACTION_VIEW
+///      intent с MIME application/vnd.android.package-archive → юзер
+///      видит system installer.
+///
+/// Замечания:
+///   - Debug APK (current dev cycle) и Release APK (с GitHub) имеют
+///     разные signing keys → install fails с INSTALL_FAILED_UPDATE_
+///     INCOMPATIBLE. UI должен warn'ить юзера если он на debug-сборке.
+///   - Android 8+ требует юзер'а grant'нуть REQUEST_INSTALL_PACKAGES
+///     permission один раз (system dialog «Allow Pyrita to install
+///     unknown apps?»).
+class UpdateService {
+  UpdateService._();
+  static final instance = UpdateService._();
+
+  static const _githubReleaseUrl =
+      'https://api.github.com/repos/rilrima96-create/Pyrita-apk/releases/latest';
+
+  /// Имя ABI-specific APK asset, который мы качаем. Соответствует
+  /// `flutter build apk --split-per-abi` output. arm64-v8a покрывает
+  /// 99% Android 10+ devices. Если нужен fallback на armeabi-v7a —
+  /// меняем эту константу.
+  static const _targetAbiAsset = 'app-arm64-v8a-release.apk';
+
+  final Dio _dio = Dio(BaseOptions(
+    connectTimeout: const Duration(seconds: 10),
+    receiveTimeout: const Duration(seconds: 30),
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'User-Agent': 'Pyrita-app/update-check',
+    },
+  ));
+
+  /// Проверяет наличие нового release. Возвращает `null` если
+  /// сетевая ошибка или если current >= latest (no update).
+  Future<UpdateInfo?> checkForUpdate() async {
+    try {
+      final pkg = await PackageInfo.fromPlatform();
+      final currentVersion = pkg.version;
+
+      final resp = await _dio.get<Map<String, dynamic>>(_githubReleaseUrl);
+      final data = resp.data;
+      if (data == null) return null;
+
+      final tagName = data['tag_name'] as String? ?? '';
+      final latestVersion = tagName.startsWith('v')
+          ? tagName.substring(1)
+          : tagName;
+      final releaseUrl = data['html_url'] as String? ?? '';
+      final body = data['body'] as String? ?? '';
+
+      final assets = (data['assets'] as List?) ?? const [];
+      final asset = assets.firstWhere(
+        (a) => a is Map && a['name'] == _targetAbiAsset,
+        orElse: () => null,
+      );
+      if (asset == null) {
+        debugPrint('[Update] no $_targetAbiAsset asset in release $tagName');
+        return null;
+      }
+      final assetUrl = asset['browser_download_url'] as String? ?? '';
+      final assetSize = (asset['size'] as int?) ?? 0;
+      if (assetUrl.isEmpty) return null;
+
+      final info = UpdateInfo(
+        currentVersion: currentVersion,
+        latestVersion: latestVersion,
+        tagName: tagName,
+        releaseUrl: releaseUrl,
+        assetUrl: assetUrl,
+        assetSizeBytes: assetSize,
+        releaseNotes: body,
+      );
+      debugPrint(
+        '[Update] current=$currentVersion latest=$latestVersion '
+        'hasUpdate=${info.hasUpdate}',
+      );
+      return info;
+    } on DioException catch (e) {
+      debugPrint('[Update] check failed: ${e.message}');
+      return null;
+    } catch (e) {
+      debugPrint('[Update] check exception: $e');
+      return null;
+    }
+  }
+
+  /// Скачивает APK в external cache dir. Стримит прогресс через
+  /// `onProgress(received, total)` callback. Возвращает File готовый
+  /// для install'а.
+  Future<File> downloadApk(
+    UpdateInfo info, {
+    required void Function(UpdateProgress) onProgress,
+  }) async {
+    final cacheDir = await getExternalCacheDirectories();
+    if (cacheDir == null || cacheDir.isEmpty) {
+      throw StateError('Не удалось получить external cache dir');
+    }
+    final apkFile = File('${cacheDir.first.path}/pyrita-${info.latestVersion}.apk');
+
+    // Если APK уже скачан и матчит размер — skip re-download.
+    if (apkFile.existsSync() && apkFile.lengthSync() == info.assetSizeBytes) {
+      debugPrint('[Update] reusing cached ${apkFile.path}');
+      onProgress(UpdateProgress(
+        received: info.assetSizeBytes,
+        total: info.assetSizeBytes,
+      ));
+      return apkFile;
+    }
+
+    debugPrint('[Update] downloading ${info.assetUrl} → ${apkFile.path}');
+    await _dio.download(
+      info.assetUrl,
+      apkFile.path,
+      onReceiveProgress: (received, total) {
+        if (total > 0) {
+          onProgress(UpdateProgress(received: received, total: total));
+        }
+      },
+      options: Options(
+        receiveTimeout: const Duration(minutes: 5),
+        headers: {
+          'Accept': 'application/octet-stream',
+          'User-Agent': 'Pyrita-app/update-download',
+        },
+      ),
+    );
+    return apkFile;
+  }
+
+  /// Триггерит Android system installer для скачанного APK.
+  /// Юзер увидит system dialog «Установить?» и должен accept'нуть.
+  /// Returns:
+  ///   * `OpenResultType.done` — system installer открыт успешно
+  ///   * другое значение — ошибка (permission denied, file not found, ...)
+  Future<OpenResult> installApk(File apk) async {
+    if (!apk.existsSync()) {
+      throw StateError('APK файл не найден: ${apk.path}');
+    }
+    debugPrint('[Update] triggering install for ${apk.path}');
+    return OpenFilex.open(apk.path, type: 'application/vnd.android.package-archive');
+  }
+}

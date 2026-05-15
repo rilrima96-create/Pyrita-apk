@@ -29,6 +29,16 @@
     -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+        REQUEST_INSTALL_PACKAGES — Android 8+ требует permission'а чтобы
+        приложение могло trigger'ить установку APK через ACTION_VIEW
+        intent. Используется UpdateService для in-app update flow
+        (Settings → «Обновить приложение»). При первом install'е Android
+        покажет system dialog «Allow Pyrita to install unknown apps?» —
+        юзер должен accept'нуть один раз.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:label="Pyrita"
         android:name="${applicationName}"

@@ -68,6 +68,18 @@ dependencies:
   # VPN работает.
   permission_handler: ^11.3.0
 
+  # Phase D: in-app update checker (GitHub Releases). Читает текущую
+  # version из pubspec, сравнивает с tag_name latest release'а.
+  package_info_plus: ^8.0.0
+
+  # Phase D: открыть скачанный APK через ACTION_VIEW intent.
+  # Triggers Android system installer (юзер видит «Установить?» dialog).
+  # Под капотом — FileProvider + intent с MIME application/vnd.android.package-archive.
+  open_filex: ^4.5.0
+
+  # Phase D: external cache dir для скачанного APK (нужен FileProvider'у).
+  path_provider: ^2.1.5
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
