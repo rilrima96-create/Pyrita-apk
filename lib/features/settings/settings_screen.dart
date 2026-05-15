@@ -314,13 +314,17 @@ class _UpdateCardState extends State<_UpdateCard> {
       if (!mounted) return;
       setState(() => _phase = 'installing');
       await UpdateService.instance.installApk(apk);
-      // После installApk Android открыл system installer. App может
-      // остаться в этом state'е пока юзер не tap'нет «Установить».
-      // Если он успешно установит — наш process убьётся; если cancel'нёт,
-      // user вернётся в Settings и увидит ещё «Установка…» — сбрасываем.
       if (mounted) {
         setState(() => _phase = 'idle');
       }
+    } on StateError catch (e) {
+      // StateError'ы от UpdateService уже human-friendly (см.
+      // downloadApk → DioException mapping). Показываем как есть.
+      if (!mounted) return;
+      setState(() {
+        _phase = 'error';
+        _error = e.message;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -328,6 +332,19 @@ class _UpdateCardState extends State<_UpdateCard> {
         _error = 'Не удалось обновить: $e';
       });
     }
+  }
+
+  /// Fallback на browser: открывает GitHub release page в системном
+  /// Chrome. Юзер сам скачивает APK + open'ет → Android installer.
+  /// Работает когда in-app download fails (например RKN блочит
+  /// `release-assets.githubusercontent.com` S3-CDN).
+  Future<void> _openInBrowser() async {
+    final info = _info;
+    if (info == null) return;
+    await launchUrl(
+      Uri.parse(info.releaseUrl),
+      mode: LaunchMode.externalApplication,
+    );
   }
 
   @override
@@ -482,6 +499,18 @@ class _UpdateCardState extends State<_UpdateCard> {
               fontSize: 13.5,
               onPressed: _updateNow,
             ),
+            const SizedBox(height: PyDS.sp1),
+            TextButton(
+              onPressed: _openInBrowser,
+              child: Text(
+                'или скачать в браузере',
+                style: PyDS.font(
+                  size: 11.5,
+                  weight: FontWeight.w500,
+                  color: PyDS.textFaint,
+                ),
+              ),
+            ),
           ] else if (info != null) ...[
             Row(
               children: [
@@ -526,6 +555,22 @@ class _UpdateCardState extends State<_UpdateCard> {
               fontSize: 13,
               color: PyDS.goldLight,
             ),
+            // Fallback: открыть GitHub release в браузере, если есть
+            // последний known info (даже если последний download failed).
+            if (info?.releaseUrl.isNotEmpty == true) ...[
+              const SizedBox(height: PyDS.sp1),
+              TextButton(
+                onPressed: _openInBrowser,
+                child: Text(
+                  'или скачать в браузере',
+                  style: PyDS.font(
+                    size: 11.5,
+                    weight: FontWeight.w500,
+                    color: PyDS.goldLight,
+                  ),
+                ),
+              ),
+            ],
           ],
         ],
       ),
@@ -1391,7 +1436,7 @@ class _AboutFooter extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(
-            'Pyrita Android · v0.1.1',
+            'Pyrita Android · v0.1.2',
             style: PyDS.font(
               size: 10.5,
               weight: FontWeight.w600,

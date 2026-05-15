@@ -6,6 +6,13 @@ import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
+/// `_log` swallow'ится в release-APK. Используем `print` через
+/// Zone-redirect — он реально пишет в logcat (filterable как 'flutter:I').
+void _log(String msg) {
+  // ignore: avoid_print
+  print('[PyritaUpdate] $msg');
+}
+
 /// Информация о доступном update'е, возвращаемая `UpdateService.checkForUpdate()`.
 @immutable
 class UpdateInfo {
@@ -139,7 +146,7 @@ class UpdateService {
         orElse: () => null,
       );
       if (asset == null) {
-        debugPrint('[Update] no $_targetAbiAsset asset in release $tagName');
+        _log('[Update] no $_targetAbiAsset asset in release $tagName');
         return null;
       }
       final assetUrl = asset['browser_download_url'] as String? ?? '';
@@ -155,16 +162,16 @@ class UpdateService {
         assetSizeBytes: assetSize,
         releaseNotes: body,
       );
-      debugPrint(
+      _log(
         '[Update] current=$currentVersion latest=$latestVersion '
         'hasUpdate=${info.hasUpdate}',
       );
       return info;
     } on DioException catch (e) {
-      debugPrint('[Update] check failed: ${e.message}');
+      _log('[Update] check failed: ${e.message}');
       return null;
     } catch (e) {
-      debugPrint('[Update] check exception: $e');
+      _log('[Update] check exception: $e');
       return null;
     }
   }
@@ -184,7 +191,7 @@ class UpdateService {
 
     // Если APK уже скачан и матчит размер — skip re-download.
     if (apkFile.existsSync() && apkFile.lengthSync() == info.assetSizeBytes) {
-      debugPrint('[Update] reusing cached ${apkFile.path}');
+      _log('[Update] reusing cached ${apkFile.path}');
       onProgress(UpdateProgress(
         received: info.assetSizeBytes,
         total: info.assetSizeBytes,
@@ -192,24 +199,58 @@ class UpdateService {
       return apkFile;
     }
 
-    debugPrint('[Update] downloading ${info.assetUrl} → ${apkFile.path}');
-    await _dio.download(
-      info.assetUrl,
-      apkFile.path,
-      onReceiveProgress: (received, total) {
-        if (total > 0) {
-          onProgress(UpdateProgress(received: received, total: total));
-        }
-      },
-      options: Options(
-        receiveTimeout: const Duration(minutes: 5),
-        headers: {
-          'Accept': 'application/octet-stream',
-          'User-Agent': 'Pyrita-app/update-download',
+    _log('[Update] downloading ${info.assetUrl} → ${apkFile.path}');
+    try {
+      // followRedirects=true чтобы пройти 302 на release-assets.
+      // githubusercontent.com (S3-Blob). validateStatus loose (<400)
+      // на случай 206 Partial Content от range download'ов.
+      await _dio.download(
+        info.assetUrl,
+        apkFile.path,
+        onReceiveProgress: (received, total) {
+          if (total > 0) {
+            onProgress(UpdateProgress(received: received, total: total));
+          }
         },
-      ),
-    );
-    return apkFile;
+        options: Options(
+          followRedirects: true,
+          maxRedirects: 5,
+          receiveTimeout: const Duration(minutes: 5),
+          headers: {
+            'Accept': 'application/octet-stream',
+            'User-Agent': 'Pyrita-app/update-download',
+          },
+          validateStatus: (s) => s != null && s < 400,
+        ),
+      );
+      _log('[Update] download complete, ${apkFile.lengthSync()} bytes');
+      return apkFile;
+    } on DioException catch (e) {
+      _log('[Update] download failed: type=${e.type} message=${e.message}');
+      // Удаляем недокачанный файл чтобы next try не reuse'ил bad cache.
+      if (apkFile.existsSync()) {
+        try {
+          apkFile.deleteSync();
+        } catch (_) {}
+      }
+      // Human-readable error чтобы юзер понял что это не «нет интернета».
+      // В РФ RKN иногда блочит releases-assets.githubusercontent.com
+      // (S3-CDN) пока api.github.com работает.
+      final reason = switch (e.type) {
+        DioExceptionType.connectionTimeout ||
+        DioExceptionType.connectionError =>
+          'Не удаётся скачать APK с GitHub (возможно блок RKN). '
+              'Попробуйте через VPN или через браузер.',
+        DioExceptionType.receiveTimeout =>
+          'Соединение оборвалось во время скачивания. Попробуйте ещё раз.',
+        DioExceptionType.badCertificate =>
+          'Ошибка SSL-сертификата GitHub. Проверьте дату на телефоне.',
+        DioExceptionType.badResponse =>
+          'GitHub вернул ошибку ${e.response?.statusCode}.',
+        _ => 'Сеть: ${e.message ?? "неизвестная ошибка"}',
+      };
+      throw StateError(reason);
+    }
   }
 
   /// Триггерит Android system installer для скачанного APK.
@@ -221,7 +262,7 @@ class UpdateService {
     if (!apk.existsSync()) {
       throw StateError('APK файл не найден: ${apk.path}');
     }
-    debugPrint('[Update] triggering install for ${apk.path}');
+    _log('[Update] triggering install for ${apk.path}');
     return OpenFilex.open(apk.path, type: 'application/vnd.android.package-archive');
   }
 }
