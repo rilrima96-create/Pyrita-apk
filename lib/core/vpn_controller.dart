@@ -130,6 +130,136 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
 
   static const _prefKeyPermissionRequested = 'vpn_permission_requested';
 
+  /// Курированный список RU-доменов которые должны идти direct (без VPN
+  /// туннеля). Без этого банки / госуслуги / маркетплейсы видят финский IP
+  /// (Helsinki — наш Marzban-сервер) и блокируют / показывают captcha.
+  ///
+  /// Этот список — pragmatic workaround вместо bundled geoip/geosite.dat
+  /// (которые добавили бы ~30 MB к каждому APK и потребовали бы override
+  /// plugin's stale bundled geo files). Long tail RU доменов всё равно
+  /// идёт через VPN — большинство сайтов работают через FI IP, проблема
+  /// только с финансовыми и государственными сервисами.
+  ///
+  /// Phase E: заменить на bundled geo files (`geosite:ru` + `geoip:ru`)
+  /// после prep'а custom-trimmed `.dat` файлов (~5 MB combined).
+  ///
+  /// Categorized для maintainability. Использует Xray's `domain:` prefix
+  /// — matches «домен и все поддомены» (sberbank.ru, www.sberbank.ru,
+  /// online.sberbank.ru, etc).
+  static const List<String> _ruDomainsBypass = [
+    // Банки + СБП
+    'domain:sberbank.ru', 'domain:sber.ru', 'domain:sbrf.ru',
+    'domain:tinkoff.ru', 'domain:t-bank.ru', 'domain:tcsbank.ru',
+    'domain:vtb.ru', 'domain:vtb24.ru',
+    'domain:alfabank.ru', 'domain:alfabank.com',
+    'domain:gazprombank.ru',
+    'domain:raiffeisen.ru',
+    'domain:psbank.ru',
+    'domain:rshb.ru',
+    'domain:open.ru', 'domain:openbank.ru',
+    'domain:rosbank.ru',
+    'domain:mkb.ru',
+    'domain:sovcombank.ru', 'domain:halvacard.ru',
+    'domain:yoomoney.ru', 'domain:yookassa.ru',
+    'domain:qiwi.com', 'domain:qiwi.ru',
+    'domain:nspk.ru',
+    // Госуслуги, налоги
+    'domain:gosuslugi.ru',
+    'domain:nalog.ru', 'domain:nalog.gov.ru',
+    'domain:gibdd.ru',
+    'domain:pfr.gov.ru', 'domain:sfr.gov.ru',
+    'domain:fssp.gov.ru',
+    'domain:mos.ru', 'domain:mosreg.ru',
+    'domain:rosreestr.ru', 'domain:rosreestr.gov.ru',
+    'domain:roskazna.ru',
+    'domain:rt.ru',
+    'domain:mvd.ru', 'domain:мвд.рф',
+    'domain:rkn.gov.ru',
+    'domain:fns.ru',
+    'domain:zakupki.gov.ru',
+    'domain:roszdravnadzor.gov.ru',
+    'domain:mos.ru',
+    // Мобильные операторы
+    'domain:mts.ru', 'domain:mts.by',
+    'domain:beeline.ru',
+    'domain:megafon.ru',
+    'domain:tele2.ru',
+    'domain:yota.ru',
+    // Yandex экосистема
+    'domain:yandex.ru', 'domain:yandex.com', 'domain:yandex.net',
+    'domain:ya.ru', 'domain:yandex.cloud',
+    'domain:kinopoisk.ru', 'domain:dzen.ru',
+    // Mail.ru / VK группа
+    'domain:mail.ru', 'domain:list.ru', 'domain:inbox.ru', 'domain:bk.ru',
+    'domain:vk.com', 'domain:vk.ru', 'domain:vkontakte.ru', 'domain:vkuseraudio.net',
+    'domain:ok.ru', 'domain:odnoklassniki.ru',
+    'domain:my.com',
+    // Маркетплейсы
+    'domain:ozon.ru',
+    'domain:wildberries.ru', 'domain:wb.ru',
+    'domain:dns-shop.ru',
+    'domain:citilink.ru',
+    'domain:eldorado.ru', 'domain:mvideo.ru',
+    'domain:lamoda.ru',
+    'domain:lenta.com',
+    'domain:perekrestok.ru',
+    'domain:magnit.ru',
+    'domain:pyaterochka.ru',
+    'domain:vkusvill.ru',
+    'domain:detmir.ru',
+    'domain:utkonos.ru',
+    'domain:samokat.ru',
+    'domain:sbermarket.ru',
+    'domain:dostavista.ru',
+    // Авто, недвижимость, работа
+    'domain:avito.ru',
+    'domain:auto.ru',
+    'domain:drom.ru',
+    'domain:cian.ru',
+    'domain:domclick.ru',
+    'domain:hh.ru', 'domain:superjob.ru',
+    // Доставка еды, такси
+    'domain:delivery-club.ru',
+    'domain:yandex-eda.ru', 'domain:eda.yandex',
+    // Стриминг, медиа
+    'domain:rutube.ru',
+    'domain:premier.one',
+    'domain:okko.tv',
+    'domain:ivi.ru',
+    'domain:wink.ru',
+    'domain:smotrim.ru',
+    'domain:1tv.ru',
+    'domain:russia.tv',
+    // СМИ (для read access без captcha)
+    'domain:rbc.ru',
+    'domain:lenta.ru',
+    'domain:ria.ru',
+    'domain:tass.ru',
+    'domain:kommersant.ru',
+    'domain:rg.ru',
+    'domain:vedomosti.ru',
+    'domain:gazeta.ru',
+    'domain:iz.ru',
+    'domain:meduza.io',
+    // Аэропорты, ЖД
+    'domain:rzd.ru',
+    'domain:aeroflot.ru',
+    'domain:pobeda.aero',
+    's7.ru',
+    'domain:utair.ru',
+    'domain:airunion.ru',
+    // Учебные, медицинские, прочие критичные
+    'domain:moodle.org',
+    'domain:rg.ru',
+    'domain:sechenov.ru',
+    'domain:doctorpiter.ru',
+    'domain:invitro.ru',
+    'domain:medsi.ru',
+    // Pyrita-собственные домены — иначе self-traffic зацикливается через VPN
+    'domain:pyrita.com',
+    'domain:api.pyrita.com',
+  ];
+
   Future<void> _init() async {
     // Notification icon — monochrome silhouette (drawable/ic_notification.xml).
     // НЕ launcher icon: launcher это adaptive-with-background, Android
@@ -490,20 +620,32 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     //    После block браузер fallback'нет на TCP/443 (regular HTTPS),
     //    которое идёт через XTLS Vision успешно.
     //
-    // 2. Private IPs → direct (localhost, LAN).
+    // 2. Hardcoded RU domain list → direct (real IP, не через Helsinki).
+    //    Банки и mobile carriers REJECT'ят запросы с финского IP
+    //    (T-Bank выдаёт 403, Sberbank лагает, Yandex показывает captcha).
+    //    Bundled geo files откладываются в Phase E (~30 MB APK overhead +
+    //    plugin's old bundled geo.dat несовместим с Xray 26.4).
     //
-    // 3. Всё остальное → proxy (VPN tunnel).
+    //    Список курирован вручную: топ-сервисы которые юзер реально
+    //    использует ежедневно. Long tail RU доменов оставлен через
+    //    VPN — большинство сайтов работают через FI IP, банки нет.
     //
-    // geosite:ru / geoip:ru правила УБРАНЫ — plugin bundles geo.dat
-    // несовместимый с Xray 26.4 'failed to check code RU > EOF'.
+    // 3. Private IPs → direct (localhost, LAN).
+    //
+    // 4. Всё остальное → proxy (VPN tunnel).
     configMap['routing'] = <String, dynamic>{
-      'domainStrategy': 'AsIs',
+      'domainStrategy': 'IPIfNonMatch',
       'rules': [
         {
           'type': 'field',
           'network': 'udp',
           'port': '443',
           'outboundTag': 'blackhole',
+        },
+        {
+          'type': 'field',
+          'domain': _ruDomainsBypass,
+          'outboundTag': 'direct',
         },
         {
           'type': 'field',
