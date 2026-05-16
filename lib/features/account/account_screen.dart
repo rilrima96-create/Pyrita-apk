@@ -162,31 +162,50 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     return email.substring(0, at);
   }
 
-  /// Возвращает (planTitle, daysLeftText, progressPct).
+  /// Возвращает (planTitle, daysLeftText, progressPct). 3-tier aware
+  /// (Pyrita Free / Pro / Max) — после migration 2026-05-15.
+  ///
+  /// Title строится из `me.tier` ('free'/'pro'/'max'). Hint и progress
+  /// идут от subscription_status (trial / paid / expired).
   ({String title, String hint, double pct}) get _planInfo {
+    // Tier raw — определяет название плана. У trial-юзеров tier='free'
+    // (backend ставит effective_tier='pro' для VPN-config, но "ваш план"
+    // всё ещё Free).
+    final tier = _me?['tier'] as String?;
+    final tierName = switch (tier) {
+      'pro' => 'Pyrita Pro',
+      'max' => 'Pyrita Max',
+      'free' => 'Pyrita Free',
+      _ => 'Pyrita',
+    };
+
     final status = _me?['subscription_status'];
     if (status is! Map) {
-      return (title: 'Pyrita', hint: 'Загружаем…', pct: 0);
+      return (title: tierName, hint: 'Загружаем…', pct: 0);
     }
     final kind = status['kind'] as String?;
     final daysLeft = status['days_left'] as int?;
-    final expiresAt = status['expires_at'] as int?;
 
     if (kind == 'paid' && daysLeft != null) {
-      final hint = expiresAt != null
-          ? 'Активен ещё $daysLeft ${_dayWord(daysLeft)}'
-          : 'Активен ещё $daysLeft ${_dayWord(daysLeft)}';
-      final pct = (daysLeft / 90).clamp(0.0, 1.0);
-      return (title: 'Pyrita Pro', hint: hint, pct: pct);
+      final hint = 'Активен ещё $daysLeft ${_dayWord(daysLeft)}';
+      final pct = (daysLeft / 365).clamp(0.0, 1.0);
+      return (title: tierName, hint: hint, pct: pct);
     }
     if (kind == 'trial' && daysLeft != null) {
+      // Trial — это 7-day Pyrita Pro для новых юзеров. tier='free' в DB
+      // но эффективно Pro. Показываем как «Pyrita Pro · пробный».
       return (
-        title: 'Pyrita Trial',
+        title: 'Pyrita Pro',
         hint: 'Пробный · $daysLeft ${_dayWord(daysLeft)}',
-        pct: (daysLeft / 14).clamp(0.0, 1.0),
+        pct: (daysLeft / 7).clamp(0.0, 1.0),
       );
     }
-    return (title: 'Pyrita', hint: 'Подписка истекла', pct: 0);
+    // Expired / free — показываем tier name + CTA hint.
+    return (
+      title: tierName,
+      hint: tier == 'free' ? 'Бесплатный план' : 'Подписка истекла',
+      pct: 0,
+    );
   }
 
   String _dayWord(int days) {
@@ -216,6 +235,7 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                       name: _displayName,
                       email: _email,
                       status: _me?['subscription_status'] as Map<String, dynamic>?,
+                      tier: _me?['tier'] as String?,
                     ),
                     const SizedBox(height: PyDS.sp4 + 2),
                     Padding(
@@ -301,6 +321,7 @@ class _ProfileHead extends StatelessWidget {
     required this.name,
     required this.email,
     required this.status,
+    required this.tier,
   });
 
   final String initial;
@@ -310,6 +331,10 @@ class _ProfileHead extends StatelessWidget {
   /// `me.subscription_status` — discriminated union {kind, days_left, ...}.
   /// Может быть null пока /api/me не загружено или если бэкенд изменил shape.
   final Map<String, dynamic>? status;
+
+  /// `me.tier` raw — 'free' / 'pro' / 'max'. null пока загружается.
+  /// Badge показывает tier-specific label (PRO N ДН / MAX N ДН).
+  final String? tier;
 
   @override
   Widget build(BuildContext context) {
@@ -403,7 +428,7 @@ class _ProfileHead extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                _StatusBadge(status: status),
+                _StatusBadge(status: status, tier: tier),
               ],
             ),
           ),
@@ -413,15 +438,19 @@ class _ProfileHead extends StatelessWidget {
   }
 }
 
-/// Status pill в ProfileHead. Discriminated union по subscription_status.kind:
-///   trial   → жёлтый «TRIAL · N дн»
-///   paid    → золотой «PRO» (если активен) либо «PRO · истекает через N»
-///   expired → красный «EXPIRED»
-///   null    → серый «…» (placeholder пока грузим)
+/// Status pill в ProfileHead. Discriminated union по subscription_status.kind
+/// + tier-aware label (3-tier migration 2026-05-15):
+///   trial             → жёлтый «TRIAL · N дн» (7-day Pyrita Pro)
+///   paid + tier=pro   → золотой «PRO · N дн»
+///   paid + tier=max   → золотой «MAX · N дн» (с icon brilliance)
+///   expired           → красный «EXPIRED»
+///   free (no status)  → серый «FREE»
+///   null              → серый «…» (placeholder пока грузим)
 class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.status});
+  const _StatusBadge({required this.status, required this.tier});
 
   final Map<String, dynamic>? status;
+  final String? tier;
 
   @override
   Widget build(BuildContext context) {
@@ -448,11 +477,14 @@ class _StatusBadge extends StatelessWidget {
           border = PyDS.warn.withValues(alpha: 0.4);
           break;
         case 'paid':
-          label = daysLeft != null ? 'PRO · $daysLeft ДН' : 'PRO';
+          // tier='max' → MAX badge с brilliance icon (premium feel).
+          // tier='pro' (или fallback) → PRO badge стандартный.
+          final tierLabel = tier == 'max' ? 'MAX' : 'PRO';
+          label = daysLeft != null ? '$tierLabel · $daysLeft ДН' : tierLabel;
           bg = const Color(0x1AF5DDA3); // gold-tint
           fg = PyDS.goldLight;
           border = PyDS.strokeStrong;
-          icon = Icons.auto_awesome;
+          icon = tier == 'max' ? Icons.diamond_outlined : Icons.auto_awesome;
           break;
         case 'expired':
           label = 'EXPIRED';

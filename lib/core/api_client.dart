@@ -181,14 +181,26 @@ class ApiClient {
   }
 
   /// POST /api/checkout/create. Создаёт invoice + возвращает redirect URL
-  /// на CryptoCloud pay-page. Caller открывает URL в Chrome Custom Tab.
+  /// на pay-page провайдера. Caller открывает URL в Chrome Custom Tab.
+  ///
+  /// `planId` — один из 'pro-1m', 'pro-3m', 'pro-6m', 'pro-12m',
+  /// 'max-1m', 'max-3m', 'max-6m', 'max-12m' (3-tier 2026-05-15
+  /// migration). Legacy '1m'/'3m'/'6m'/'12m' тоже принимаются — backend
+  /// маппит их в pro-*. Phase E удалит legacy.
+  ///
+  /// `provider` — 'cryptocloud' (default) или 'lava'.
+  ///   * cryptocloud — крипта (USDT/BTC/etc), без РФ-карт
+  ///   * lava — СБП/карты, удобнее для РФ-юзеров
   ///
   /// Если BILLING_ENABLED=0 на сервере → 404. Caller должен handle.
-  Future<({int paymentId, String redirectUrl})> createCheckout(String planId) async {
+  Future<({int paymentId, String redirectUrl})> createCheckout(
+    String planId, {
+    String provider = 'lava',
+  }) async {
     try {
       final res = await _dio.post(
         "/api/checkout/create",
-        data: {"plan_id": planId},
+        data: {"plan_id": planId, "provider": provider},
         options: Options(headers: {"Content-Type": "application/json"}),
       );
       if (res.statusCode == 404) {

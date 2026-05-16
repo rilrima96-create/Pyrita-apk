@@ -9,13 +9,24 @@ import '../../shared/widgets/py_button.dart';
 import '../../shared/widgets/py_card.dart';
 import '../../shared/widgets/py_tab_bar.dart';
 
-/// Plan picker — 4 тарифа. На тап "Оплатить":
-///   1. POST /api/checkout/create → backend создаёт CC invoice
-///   2. Открываем `redirect_url` в Chrome Custom Tab
-///   3. После возврата — pop screen, home polls /api/me
+/// 3-tier checkout screen (Free / Pro / Max) — mirror'ит /dashboard/billing
+/// на pyrita.com. Backend migration 2026-05-15: plan_id формат
+/// 'pro-1m' / 'max-12m' и т.д. (8 IDs + 4 legacy aliases).
 ///
-/// Card form / payment-method селектор — визуал-only (реальную карту
-/// принимает CryptoCloud на своей странице, мы не PCI-compliant).
+/// UX flow:
+///   1. Top: monthly/annual toggle (default annual — exposed savings)
+///   2. 3 vertical cards (full-width на mobile):
+///      • Pyrita Free — без кнопок (актуальный плюс trial state)
+///      • Pyrita Pro (featured) — golden border + «Безлимит, 3 устройства…»
+///      • Pyrita Max — Pro + 6 устройств + ручной выбор сервера
+///   3. На карточке Pro/Max — кнопка «Подробно» → bottom sheet с 4
+///      длительностями + 2 провайдерами (Lava / CryptoCloud)
+///   4. Tap на длительность × провайдер → POST /api/checkout/create →
+///      launchUrl externalApplication mode → юзер платит
+///
+/// Trial-юзеры (effective_tier='pro', tier='free') показывают Free как
+/// current с trial-плашкой; могут upgrade'нуть до paid Pro/Max не
+/// дожидаясь окончания trial'а (backend засчитывает разницу).
 class CheckoutScreen extends ConsumerStatefulWidget {
   const CheckoutScreen({super.key});
 
@@ -24,69 +35,32 @@ class CheckoutScreen extends ConsumerStatefulWidget {
 }
 
 class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
-  String _selectedId = '6m';
-  String _method = 'card';
-  bool _loading = false;
-  String? _errorMsg;
+  /// 'monthly' — 1m plan IDs, 'annual' — 12m IDs. По умолчанию annual —
+  /// чтобы saving callout сразу visible.
+  bool _annual = true;
 
-  static final List<_Plan> _plans = [
-    _Plan(
-      id: '1m',
-      title: '1 месяц',
-      price: '₽200',
-      perMonth: '₽200 / мес',
-    ),
-    _Plan(
-      id: '3m',
-      title: '3 месяца',
-      price: '₽500',
-      perMonth: '₽167 / мес',
-      save: '−17%',
-    ),
-    _Plan(
-      id: '6m',
-      title: '6 месяцев',
-      price: '₽900',
-      perMonth: '₽150 / мес',
-      save: '−25%',
-      best: true,
-    ),
-    _Plan(
-      id: '12m',
-      title: '12 месяцев',
-      price: '₽1 500',
-      perMonth: '₽125 / мес',
-      save: '−38%',
-    ),
-  ];
+  /// Текущий tier юзера для подсветки активной карточки.
+  /// Загружаем через /api/me на initState. До загрузки — null (skeleton).
+  /// Для trial-юзеров (tier='free' + trial_ends_at > now) показываем Free
+  /// как current — backend всё ещё считает их Free, trial mimics Pro
+  /// только для VPN-config'а.
+  String? _currentTier;
 
-  _Plan get _selected => _plans.firstWhere((p) => p.id == _selectedId);
+  @override
+  void initState() {
+    super.initState();
+    _loadMe();
+  }
 
-  Future<void> _pay() async {
-    if (_loading) return;
-    setState(() {
-      _loading = true;
-      _errorMsg = null;
-    });
-
+  Future<void> _loadMe() async {
     try {
-      final result = await ApiClient.instance.createCheckout(_selectedId);
-      final uri = Uri.parse(result.redirectUrl);
-      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!ok && mounted) {
-        setState(() {
-          _errorMsg = 'Не удалось открыть страницу оплаты';
-          _loading = false;
-        });
-        return;
-      }
-      if (mounted) context.pop();
+      final me = await ApiClient.instance.getMe();
+      if (!mounted) return;
+      setState(() => _currentTier = me['tier'] as String?);
     } on ApiException catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMsg = e.message;
-          _loading = false;
-        });
+      if (!mounted) return;
+      if (e.statusCode == 401) {
+        context.go('/login');
       }
     }
   }
@@ -114,108 +88,53 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                       ),
                       child: _Hero(),
                     ),
-                    const SizedBox(height: PyDS.sp4 + 2),
+                    const SizedBox(height: PyDS.sp4),
                     Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: PyDS.sp4 + 2,
                       ),
+                      child: _BillingToggle(
+                        annual: _annual,
+                        onChanged: (v) => setState(() => _annual = v),
+                      ),
+                    ),
+                    const SizedBox(height: PyDS.sp3),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: PyDS.sp4 + 2),
                       child: Column(
                         children: [
-                          for (final p in _plans) ...[
-                            _PlanCard(
-                              plan: p,
-                              selected: p.id == _selectedId,
-                              onTap: () =>
-                                  setState(() => _selectedId = p.id),
-                            ),
-                            const SizedBox(height: PyDS.sp2),
-                          ],
+                          _TierCard(
+                            tier: _PricingTier.free,
+                            annual: _annual,
+                            isCurrent: _currentTier == 'free',
+                          ),
+                          const SizedBox(height: PyDS.sp3),
+                          _TierCard(
+                            tier: _PricingTier.pro,
+                            annual: _annual,
+                            isCurrent: _currentTier == 'pro',
+                          ),
+                          const SizedBox(height: PyDS.sp3),
+                          _TierCard(
+                            tier: _PricingTier.max,
+                            annual: _annual,
+                            isCurrent: _currentTier == 'max',
+                          ),
                         ],
                       ),
                     ),
-                    const _SectionTitle('Способ оплаты'),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: PyDS.sp4 + 2,
-                      ),
-                      child: _MethodToggle(
-                        active: _method,
-                        onChange: (m) => setState(() => _method = m),
-                      ),
-                    ),
-                    if (_method == 'card') ...[
-                      const SizedBox(height: PyDS.sp3),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: PyDS.sp4 + 2,
+                    const SizedBox(height: PyDS.sp3),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: PyDS.sp4 + 6),
+                      child: Text(
+                        'Оплата картой РФ или СБП через Lava либо криптой '
+                        'через CryptoCloud. 7 дней на возврат без объяснений.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: PyDS.textFaint,
+                          height: 1.45,
                         ),
-                        child: Column(
-                          children: const [
-                            _CardField(
-                              label: 'Номер карты',
-                              value: '4242  ••••  ••••  4242',
-                              trailing: _CardBrandIcons(),
-                            ),
-                            SizedBox(height: PyDS.sp2 + 2),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: _CardField(
-                                    label: 'Срок',
-                                    value: '08 / 29',
-                                  ),
-                                ),
-                                SizedBox(width: PyDS.sp2 + 2),
-                                Expanded(
-                                  child: _CardField(
-                                    label: 'CVV',
-                                    value: '•••',
-                                    mono: true,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    if (_errorMsg != null)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(
-                          PyDS.sp4 + 2,
-                          PyDS.sp3,
-                          PyDS.sp4 + 2,
-                          0,
-                        ),
-                        child: Container(
-                          padding: const EdgeInsets.all(PyDS.sp3),
-                          decoration: BoxDecoration(
-                            color: PyDS.danger.withValues(alpha: 0.1),
-                            border: Border.all(
-                              color: PyDS.danger.withValues(alpha: 0.4),
-                            ),
-                            borderRadius:
-                                BorderRadius.circular(PyDS.rMd),
-                          ),
-                          child: Text(
-                            _errorMsg!,
-                            style: PyDS.font(
-                              size: 12,
-                              weight: FontWeight.w600,
-                              color: PyDS.danger,
-                            ),
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: PyDS.sp4 + 2),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: PyDS.sp4 + 2,
-                      ),
-                      child: _TotalCard(
-                        plan: _selected,
-                        loading: _loading,
-                        onPay: _pay,
                       ),
                     ),
                   ],
@@ -239,19 +158,19 @@ class _Hero extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Выберите длительность',
+          'Free, чтобы попробовать.\nPro — для повседневного.',
           style: PyDS.font(
-            size: 26,
+            size: 22,
             weight: FontWeight.w800,
-            letterSpacing: -0.65,
-            height: 1.15,
+            letterSpacing: -0.5,
+            height: 1.2,
             color: PyDS.text,
           ),
         ),
         const SizedBox(height: 6),
         Text(
-          'Все тарифы одинаковые. Чем дольше — тем дешевле в месяц. '
-          'Отменить можно в любой момент.',
+          'Один аккаунт — все ваши устройства. '
+          'Российские сайты всегда напрямую.',
           style: PyDS.font(
             size: 13,
             weight: FontWeight.w500,
@@ -264,403 +183,411 @@ class _Hero extends StatelessWidget {
   }
 }
 
-class _Plan {
-  const _Plan({
-    required this.id,
-    required this.title,
-    required this.price,
-    required this.perMonth,
-    this.save,
-    this.best = false,
-  });
+class _BillingToggle extends StatelessWidget {
+  const _BillingToggle({required this.annual, required this.onChanged});
 
-  final String id;
-  final String title;
-  final String price;
-  final String perMonth;
-  final String? save;
-  final bool best;
+  final bool annual;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: PyDS.bg2,
+        borderRadius: BorderRadius.circular(PyDS.rPill),
+        border: Border.all(color: PyDS.stroke),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _ToggleSegment(
+              label: 'Помесячно',
+              active: !annual,
+              onTap: () => onChanged(false),
+            ),
+          ),
+          Expanded(
+            child: _ToggleSegment(
+              label: 'Годовая',
+              hint: '−27–37%',
+              active: annual,
+              onTap: () => onChanged(true),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-class _PlanCard extends StatelessWidget {
-  const _PlanCard({
-    required this.plan,
-    required this.selected,
+class _ToggleSegment extends StatelessWidget {
+  const _ToggleSegment({
+    required this.label,
+    required this.active,
     required this.onTap,
+    this.hint,
   });
 
-  final _Plan plan;
-  final bool selected;
+  final String label;
+  final String? hint;
+  final bool active;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
       behavior: HitTestBehavior.opaque,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            padding: EdgeInsets.all(selected ? 2 : 1),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(PyDS.rLg),
-              gradient: selected
-                  ? const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        Color(0xFFF5DDA3),
-                        Color(0xFF8A6D40),
-                        Color(0xFFC9A875),
-                      ],
-                      stops: [0.0, 0.7, 1.0],
-                    )
-                  : null,
-              color: selected ? null : PyDS.stroke,
-              boxShadow: selected
-                  ? [
-                      BoxShadow(
-                        color: PyDS.gold.withValues(alpha: 0.45),
-                        blurRadius: 40,
-                        offset: const Offset(0, 16),
-                        spreadRadius: -16,
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: PyDS.sp4,
-                vertical: PyDS.sp3 + 2,
-              ),
-              decoration: BoxDecoration(
-                color: PyDS.bg1,
-                borderRadius: BorderRadius.circular(PyDS.rLg - 2),
-              ),
-              child: Row(
-                children: [
-                  _PlanRadio(selected: selected),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                plan.title,
-                                overflow: TextOverflow.ellipsis,
-                                style: PyDS.font(
-                                  size: 14.5,
-                                  weight: FontWeight.w800,
-                                  letterSpacing: -0.15,
-                                  color: PyDS.text,
-                                ),
-                              ),
-                            ),
-                            if (plan.save != null) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 7,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0x1AF5DDA3),
-                                  borderRadius:
-                                      BorderRadius.circular(PyDS.rPill),
-                                  border: Border.all(color: PyDS.stroke),
-                                ),
-                                child: Text(
-                                  plan.save!,
-                                  style: PyDS.font(
-                                    size: 9.5,
-                                    weight: FontWeight.w700,
-                                    letterSpacing: 0.4,
-                                    color: PyDS.goldLight,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        const SizedBox(height: 1),
-                        Text(
-                          plan.perMonth,
-                          style: PyDS.font(
-                            size: 11.5,
-                            weight: FontWeight.w600,
-                            color: PyDS.textFaint,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  if (selected)
-                    PyTextGold(
-                      text: plan.price,
-                      style: PyDS.font(
-                        size: 16,
-                        weight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                      ),
-                    )
-                  else
-                    Text(
-                      plan.price,
-                      style: PyDS.font(
-                        size: 16,
-                        weight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                        color: PyDS.text,
-                      ),
-                    ),
-                ],
+      onTap: onTap,
+      child: Container(
+        height: 36,
+        decoration: BoxDecoration(
+          gradient: active ? PyDS.gradGold : null,
+          borderRadius: BorderRadius.circular(PyDS.rPill),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              label,
+              style: PyDS.font(
+                size: 12.5,
+                weight: FontWeight.w700,
+                color: active ? const Color(0xFF1A140A) : PyDS.textSoft,
               ),
             ),
-          ),
-          if (plan.best)
-            Positioned(
-              top: -9,
-              right: 18,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 3,
-                ),
-                decoration: BoxDecoration(
-                  color: PyDS.bg2,
-                  borderRadius: BorderRadius.circular(PyDS.rPill),
-                  border: Border.all(color: PyDS.strokeStrong),
-                ),
-                child: Text(
-                  'ВЫГОДНЕЕ',
-                  style: PyDS.font(
-                    size: 9.5,
-                    weight: FontWeight.w700,
-                    letterSpacing: 0.7,
-                    color: PyDS.goldLight,
-                  ),
+            if (hint != null) ...[
+              const SizedBox(width: 6),
+              Text(
+                hint!,
+                style: PyDS.font(
+                  size: 10,
+                  weight: FontWeight.w700,
+                  letterSpacing: 0.4,
+                  color: active ? const Color(0xFF1A140A) : PyDS.goldLight,
                 ),
               ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PlanRadio extends StatelessWidget {
-  const _PlanRadio({required this.selected});
-
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 22,
-      height: 22,
-      decoration: BoxDecoration(
-        gradient: selected ? PyDS.gradGold : null,
-        shape: BoxShape.circle,
-        border: selected
-            ? null
-            : Border.all(color: PyDS.strokeStrong, width: 1.5),
-      ),
-      child: selected
-          ? const Icon(
-              Icons.check,
-              size: 12,
-              color: Color(0xFF1A140A),
-            )
-          : null,
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.title);
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        PyDS.sp4 + 6,
-        PyDS.sp5,
-        PyDS.sp4 + 6,
-        PyDS.sp2 + 2,
-      ),
-      child: Text(
-        title.toUpperCase(),
-        style: PyDS.font(
-          size: 11,
-          weight: FontWeight.w700,
-          letterSpacing: 0.4,
-          color: PyDS.textFaint,
+            ],
+          ],
         ),
       ),
     );
   }
 }
 
-class _MethodToggle extends StatelessWidget {
-  const _MethodToggle({required this.active, required this.onChange});
+// ──────────────────────────────────────────────────────────────────────
+// Tier data — mirror pricing.tiers в pyrita-web/src/lib/content.ts.
+// Если backend изменит prices или features — обновлять оба места.
+// ──────────────────────────────────────────────────────────────────────
 
-  final String active;
-  final ValueChanged<String> onChange;
+enum _PricingTier { free, pro, max }
 
-  @override
-  Widget build(BuildContext context) {
-    final items = const [
-      ('card', 'Карта', Icons.credit_card_outlined),
-      ('crypto', 'Крипто', Icons.currency_bitcoin),
-      ('sbp', 'SBP', Icons.swap_horiz),
-    ];
-    return PyCard(
-      padding: const EdgeInsets.all(4),
-      radius: PyDS.rLg,
-      child: Row(
-        children: [
-          for (final (id, label, icon) in items)
-            Expanded(
-              child: GestureDetector(
-                onTap: () => onChange(id),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 11),
-                  decoration: BoxDecoration(
-                    gradient: id == active ? PyDS.gradGold : null,
-                    borderRadius: BorderRadius.circular(PyDS.rMd),
-                  ),
-                  alignment: Alignment.center,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        icon,
-                        size: 15,
-                        color: id == active
-                            ? const Color(0xFF1A140A)
-                            : PyDS.textMute,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        label,
-                        style: PyDS.font(
-                          size: 13,
-                          weight: FontWeight.w700,
-                          color: id == active
-                              ? const Color(0xFF1A140A)
-                              : PyDS.textMute,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CardField extends StatelessWidget {
-  const _CardField({
-    required this.label,
-    required this.value,
-    this.trailing,
-    this.mono = false,
+class _TierMeta {
+  const _TierMeta({
+    required this.id,
+    required this.name,
+    required this.tagline,
+    required this.featured,
+    required this.priceMonthly,
+    required this.priceAnnual,
+    required this.perMonthMonthly,
+    required this.perMonthAnnual,
+    required this.savingsAnnual,
+    required this.features,
+    required this.durations,
   });
 
+  final String id;
+  final String name;
+  final String tagline;
+  final bool featured;
+  final String priceMonthly;
+  final String priceAnnual;
+  final String? perMonthMonthly;
+  final String? perMonthAnnual;
+  final String? savingsAnnual;
+  final List<String> features;
+  // 4 длительности (1m/3m/6m/12m) для bottom-sheet picker'а. null для Free.
+  final List<_Duration>? durations;
+
+  static _TierMeta of(_PricingTier t) => switch (t) {
+        _PricingTier.free => const _TierMeta(
+            id: 'free',
+            name: 'Pyrita Free',
+            tagline: 'Попробовать без карты',
+            featured: false,
+            priceMonthly: '0 ₽',
+            priceAnnual: '0 ₽',
+            perMonthMonthly: null,
+            perMonthAnnual: null,
+            savingsAnnual: null,
+            features: [
+              '10 ГБ трафика в месяц',
+              '1 устройство',
+              'Финляндия · VLESS',
+              'Российские сайты — напрямую',
+            ],
+            durations: null,
+          ),
+        _PricingTier.pro => const _TierMeta(
+            id: 'pro',
+            name: 'Pyrita Pro',
+            tagline: 'Безлимит и фильтры',
+            featured: true,
+            priceMonthly: '199 ₽',
+            priceAnnual: '1 500 ₽',
+            perMonthMonthly: '199 ₽/мес',
+            perMonthAnnual: '125 ₽/мес',
+            savingsAnnual: 'Экономия 37%',
+            features: [
+              'Безлимит трафика',
+              '3 устройства',
+              '5 серверов · 5 протоколов',
+              'Блок рекламы, трекинга, малвари',
+              '7 дней на возврат',
+            ],
+            durations: [
+              _Duration('pro-1m', '1 месяц', 199, perMonth: 199),
+              _Duration('pro-3m', '3 месяца', 500, perMonth: 167, savePct: 16),
+              _Duration('pro-6m', '6 месяцев', 900, perMonth: 150, savePct: 25),
+              _Duration('pro-12m', '12 месяцев', 1500, perMonth: 125, savePct: 37),
+            ],
+          ),
+        _PricingTier.max => const _TierMeta(
+            id: 'max',
+            name: 'Pyrita Max',
+            tagline: 'Для требовательных',
+            featured: false,
+            priceMonthly: '399 ₽',
+            priceAnnual: '3 500 ₽',
+            perMonthMonthly: '399 ₽/мес',
+            perMonthAnnual: '292 ₽/мес',
+            savingsAnnual: 'Экономия 27%',
+            features: [
+              'Всё из Pro',
+              '6 устройств',
+              'Ручной выбор сервера/протокола',
+              'Резервный канал (whitelist-bypass)',
+            ],
+            durations: [
+              _Duration('max-1m', '1 месяц', 399, perMonth: 399),
+              _Duration('max-3m', '3 месяца', 1000, perMonth: 333, savePct: 16),
+              _Duration('max-6m', '6 месяцев', 1900, perMonth: 317, savePct: 21),
+              _Duration('max-12m', '12 месяцев', 3500, perMonth: 292, savePct: 27),
+            ],
+          ),
+      };
+}
+
+class _Duration {
+  const _Duration(
+    this.planId,
+    this.label,
+    this.amount, {
+    required this.perMonth,
+    this.savePct,
+  });
+
+  final String planId;
   final String label;
-  final String value;
-  final Widget? trailing;
-  final bool mono;
+  final int amount;
+  final int perMonth;
+  final int? savePct;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+
+class _TierCard extends StatelessWidget {
+  const _TierCard({
+    required this.tier,
+    required this.annual,
+    required this.isCurrent,
+  });
+
+  final _PricingTier tier;
+  final bool annual;
+  final bool isCurrent;
 
   @override
   Widget build(BuildContext context) {
+    final meta = _TierMeta.of(tier);
+    final price = annual ? meta.priceAnnual : meta.priceMonthly;
+    final perMonth = annual ? meta.perMonthAnnual : meta.perMonthMonthly;
+    final savings = annual ? meta.savingsAnnual : null;
+
     return PyCard(
-      padding: const EdgeInsets.symmetric(
-        horizontal: PyDS.sp3 + 2,
-        vertical: PyDS.sp3 - 2,
-      ),
+      padding: const EdgeInsets.all(PyDS.sp4),
       radius: PyDS.rMd,
+      border: Border.all(
+        color: isCurrent
+            ? PyDS.strokeStrong
+            : (meta.featured ? PyDS.strokeStrong : PyDS.stroke),
+        width: isCurrent || meta.featured ? 1.5 : 1,
+      ),
+      gradient: isCurrent
+          ? const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0x1FF5DDA3), Color(0x05C9A875)],
+            )
+          : null,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            label.toUpperCase(),
-            style: PyDS.font(
-              size: 9.5,
-              weight: FontWeight.w700,
-              letterSpacing: 0.4,
-              color: PyDS.textFaint,
-            ),
-          ),
-          const SizedBox(height: 4),
           Row(
             children: [
               Expanded(
                 child: Text(
-                  value,
-                  overflow: TextOverflow.ellipsis,
+                  meta.name,
                   style: PyDS.font(
-                    size: 14.5,
-                    weight: FontWeight.w700,
-                    color: PyDS.text,
-                    mono: mono,
+                    size: 16,
+                    weight: FontWeight.w800,
+                    color: meta.featured ? PyDS.goldLight : PyDS.text,
                   ),
                 ),
               ),
-              if (trailing != null) trailing!,
+              if (isCurrent)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: PyDS.gold.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(PyDS.rPill),
+                  ),
+                  child: Text(
+                    'ВАШ ПЛАН',
+                    style: PyDS.font(
+                      size: 9.5,
+                      weight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                      color: PyDS.goldLight,
+                    ),
+                  ),
+                ),
             ],
           ),
+          const SizedBox(height: 2),
+          Text(
+            meta.tagline,
+            style: PyDS.font(
+              size: 12,
+              weight: FontWeight.w500,
+              color: PyDS.textSoft,
+            ),
+          ),
+          const SizedBox(height: PyDS.sp3),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              PyTextGold(
+                text: price,
+                style: PyDS.font(
+                  size: 28,
+                  weight: FontWeight.w800,
+                  letterSpacing: -0.8,
+                  height: 1.0,
+                ),
+              ),
+              if (perMonth != null) ...[
+                const SizedBox(width: 10),
+                Flexible(
+                  child: Text(
+                    perMonth,
+                    overflow: TextOverflow.ellipsis,
+                    style: PyDS.font(
+                      size: 12,
+                      weight: FontWeight.w500,
+                      color: PyDS.textFaint,
+                      mono: true,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          if (savings != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              savings,
+              style: PyDS.font(
+                size: 11,
+                weight: FontWeight.w700,
+                letterSpacing: 0.3,
+                color: PyDS.goldLight,
+              ),
+            ),
+          ],
+          const SizedBox(height: PyDS.sp3),
+          for (final f in meta.features) ...[
+            _FeatureRow(text: f, goldCheck: meta.featured),
+            const SizedBox(height: 6),
+          ],
+          if (meta.durations != null) ...[
+            const SizedBox(height: PyDS.sp3 - 2),
+            PyButtonGold(
+              label: 'Оформить',
+              icon: const Icon(Icons.arrow_forward_rounded,
+                  size: 16, color: Color(0xFF1A140A)),
+              height: 44,
+              fontSize: 13.5,
+              onPressed: () => _openPicker(context, meta),
+            ),
+          ] else ...[
+            const SizedBox(height: PyDS.sp2 + 2),
+            Text(
+              isCurrent
+                  ? 'Активный план — без оплаты'
+                  : 'Активируется автоматически после окончания подписки',
+              style: PyDS.font(
+                size: 11.5,
+                weight: FontWeight.w500,
+                color: PyDS.textFaint,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
+
+  void _openPicker(BuildContext context, _TierMeta meta) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _PaymentPickerSheet(meta: meta),
+    );
+  }
 }
 
-class _CardBrandIcons extends StatelessWidget {
-  const _CardBrandIcons();
+class _FeatureRow extends StatelessWidget {
+  const _FeatureRow({required this.text, required this.goldCheck});
+  final String text;
+  final bool goldCheck;
 
   @override
   Widget build(BuildContext context) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: 22,
-          height: 14,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFFEB001B), Color(0xFFF79E1B)],
-            ),
-            borderRadius: BorderRadius.circular(3),
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(
+            Icons.check,
+            size: 13,
+            color: goldCheck ? PyDS.goldLight : PyDS.textMute,
           ),
         ),
-        const SizedBox(width: 4),
-        Container(
-          width: 22,
-          height: 14,
-          decoration: BoxDecoration(
-            color: const Color(0xFF1A1F71),
-            borderRadius: BorderRadius.circular(3),
-          ),
-          alignment: Alignment.center,
-          child: const Text(
-            'V',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 8,
-              fontWeight: FontWeight.w800,
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: PyDS.font(
+              size: 12.5,
+              weight: FontWeight.w500,
+              height: 1.4,
+              color: PyDS.textSoft,
             ),
           ),
         ),
@@ -669,105 +596,283 @@ class _CardBrandIcons extends StatelessWidget {
   }
 }
 
-class _TotalCard extends StatelessWidget {
-  const _TotalCard({
-    required this.plan,
-    required this.loading,
-    required this.onPay,
-  });
+// ──────────────────────────────────────────────────────────────────────
+// Bottom-sheet picker: 4 длительности × 2 провайдера. Tap = create
+// invoice + open external browser.
+// ──────────────────────────────────────────────────────────────────────
 
-  final _Plan plan;
-  final bool loading;
-  final VoidCallback onPay;
+class _PaymentPickerSheet extends StatefulWidget {
+  const _PaymentPickerSheet({required this.meta});
+  final _TierMeta meta;
+
+  @override
+  State<_PaymentPickerSheet> createState() => _PaymentPickerSheetState();
+}
+
+class _PaymentPickerSheetState extends State<_PaymentPickerSheet> {
+  /// Выбранная длительность. По умолчанию — annual (12m, лучшая экономия).
+  late _Duration _selected = widget.meta.durations!.last;
+
+  String? _loadingFor; // 'planId:provider' либо null
+  String? _error;
+
+  Future<void> _pay(String provider) async {
+    if (_loadingFor != null) return;
+    setState(() {
+      _loadingFor = '${_selected.planId}:$provider';
+      _error = null;
+    });
+    try {
+      final res = await ApiClient.instance.createCheckout(
+        _selected.planId,
+        provider: provider,
+      );
+      final uri = Uri.parse(res.redirectUrl);
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && mounted) {
+        setState(() {
+          _error = 'Не удалось открыть страницу оплаты';
+          _loadingFor = null;
+        });
+        return;
+      }
+      if (mounted) {
+        // pop sheet + checkout screen — юзер ушёл в браузер.
+        Navigator.of(context).pop();
+        context.pop();
+      }
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _loadingFor = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Не удалось создать платёж: $e';
+        _loadingFor = null;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final isLavaLoading = _loadingFor == '${_selected.planId}:lava';
+    final isCcLoading = _loadingFor == '${_selected.planId}:cryptocloud';
+    final isAnyLoading = _loadingFor != null;
+
     return Container(
-      padding: const EdgeInsets.all(PyDS.sp4),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF221A13), Color(0xFF14100C)],
+      decoration: const BoxDecoration(
+        color: PyDS.bg,
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(PyDS.rLg),
         ),
-        border: Border.all(color: PyDS.strokeStrong),
-        borderRadius: BorderRadius.circular(PyDS.rLg),
-        boxShadow: PyDS.shadowCard,
+        border: Border(top: BorderSide(color: PyDS.strokeStrong, width: 1.5)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+        PyDS.sp4,
+        PyDS.sp4,
+        PyDS.sp4,
+        MediaQuery.of(context).viewInsets.bottom + PyDS.sp4,
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Column(
+          // Drag handle
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: PyDS.stroke,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: PyDS.sp3),
+          Text(
+            widget.meta.name,
+            style: PyDS.font(
+              size: 18,
+              weight: FontWeight.w800,
+              color: PyDS.text,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Выберите длительность и провайдера оплаты',
+            style: PyDS.font(
+              size: 12,
+              weight: FontWeight.w500,
+              color: PyDS.textSoft,
+            ),
+          ),
+          const SizedBox(height: PyDS.sp4),
+          // Длительности — 4 ряда
+          for (final dur in widget.meta.durations!) ...[
+            _DurationRow(
+              duration: dur,
+              selected: _selected.planId == dur.planId,
+              onTap: () => setState(() => _selected = dur),
+            ),
+            const SizedBox(height: PyDS.sp2),
+          ],
+          const SizedBox(height: PyDS.sp3),
+          // Pay-кнопки
+          PyButtonGold(
+            label: isLavaLoading ? 'Создаём…' : 'Оплатить картой / СБП',
+            icon: const Icon(Icons.credit_card,
+                size: 16, color: Color(0xFF1A140A)),
+            height: 48,
+            fontSize: 14,
+            onPressed: isAnyLoading ? null : () => _pay('lava'),
+          ),
+          const SizedBox(height: PyDS.sp2),
+          PyButtonGhost(
+            label: isCcLoading ? 'Создаём…' : 'Оплатить криптой',
+            icon: const Icon(Icons.currency_bitcoin,
+                size: 16, color: PyDS.goldLight),
+            height: 48,
+            fontSize: 14,
+            onPressed: isAnyLoading ? null : () => _pay('cryptocloud'),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: PyDS.sp3),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: PyDS.danger.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(PyDS.rSm),
+                border: Border.all(
+                    color: PyDS.danger.withValues(alpha: 0.35)),
+              ),
+              child: Text(
+                _error!,
+                style: PyDS.font(
+                  size: 12,
+                  weight: FontWeight.w500,
+                  color: PyDS.danger,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DurationRow extends StatelessWidget {
+  const _DurationRow({
+    required this.duration,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _Duration duration;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: PyDS.sp3 + 2,
+          vertical: PyDS.sp3,
+        ),
+        decoration: BoxDecoration(
+          color: selected ? PyDS.gold.withValues(alpha: 0.10) : PyDS.bg2,
+          borderRadius: BorderRadius.circular(PyDS.rMd),
+          border: Border.all(
+            color: selected ? PyDS.strokeStrong : PyDS.stroke,
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            // Radio
+            Container(
+              width: 20,
+              height: 20,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? PyDS.goldLight : PyDS.textFaint,
+                  width: 2,
+                ),
+              ),
+              child: selected
+                  ? Center(
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: PyDS.goldLight,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'К ОПЛАТЕ',
+                    duration.label,
                     style: PyDS.font(
-                      size: 10,
+                      size: 14,
                       weight: FontWeight.w700,
-                      letterSpacing: 0.4,
-                      color: PyDS.textFaint,
+                      color: PyDS.text,
                     ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 1),
                   Text(
-                    plan.price,
+                    '${duration.perMonth} ₽/мес',
                     style: PyDS.font(
-                      size: 24,
-                      weight: FontWeight.w800,
-                      letterSpacing: -0.7,
-                      height: 1.1,
-                      color: PyDS.text,
+                      size: 11.5,
+                      weight: FontWeight.w500,
+                      color: PyDS.textFaint,
+                      mono: true,
                     ),
                   ),
                 ],
               ),
-              const Spacer(),
-              Text(
-                plan.perMonth,
-                style: PyDS.font(
-                  size: 11.5,
-                  weight: FontWeight.w500,
-                  color: PyDS.textSoft,
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${duration.amount} ₽',
+                  style: PyDS.font(
+                    size: 15,
+                    weight: FontWeight.w800,
+                    color: PyDS.text,
+                  ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          PyButtonGold(
-            label: 'Оплатить ${plan.price}',
-            busy: loading,
-            onPressed: onPay,
-            fontSize: 14.5,
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.lock_outline, size: 11, color: PyDS.textFaint),
-              const SizedBox(width: 4),
-              Text(
-                'TLS 1.3',
-                style: PyDS.font(
-                  size: 10.5,
-                  weight: FontWeight.w600,
-                  color: PyDS.textFaint,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Text(
-                '7 дней возврат',
-                style: PyDS.font(
-                  size: 10.5,
-                  weight: FontWeight.w600,
-                  color: PyDS.textFaint,
-                ),
-              ),
-            ],
-          ),
-        ],
+                if (duration.savePct != null) ...[
+                  const SizedBox(height: 1),
+                  Text(
+                    '−${duration.savePct}%',
+                    style: PyDS.font(
+                      size: 10.5,
+                      weight: FontWeight.w700,
+                      letterSpacing: 0.3,
+                      color: PyDS.goldLight,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
