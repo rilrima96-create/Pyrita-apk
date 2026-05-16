@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    FileProvider paths для Pyrita APK installer'а.
+
+    External cache — куда UpdateService.downloadApk сохраняет APK через
+    path_provider.getExternalCacheDirectories(). Этот path resolved в
+    `/storage/emulated/0/Android/data/com.pyrita.pyrita_app/cache/`.
+
+    FileProvider authority: com.pyrita.pyrita_app.fileprovider
+    (см. AndroidManifest.xml + MainActivity.kt FILE_PROVIDER_AUTHORITY).
+
+    External cache хватает — на Android 11+ scoped storage не блокирует
+    app's own cache directory (apps owns её). Package installer может
+    читать через temp grant FLAG_GRANT_READ_URI_PERMISSION.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-cache-path
+        name="pyrita-cache"
+        path="." />
+    <external-files-path
+        name="pyrita-files"
+        path="." />
+    <cache-path
+        name="pyrita-internal-cache"
+        path="." />
+</paths>

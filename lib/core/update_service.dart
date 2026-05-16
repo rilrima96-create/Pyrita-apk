@@ -2,10 +2,18 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:open_filex/open_filex.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+
+/// Native method channel для APK install intent. open_filex и share_plus
+/// оба silent fail'или на Android 14+ Samsung One UI — юзер видел «моргнула
+/// и выключилась» без installer dialog'а. Свой native intent в
+/// MainActivity.installApk с FLAG_ACTIVITY_NEW_TASK +
+/// FLAG_GRANT_READ_URI_PERMISSION + кастомный FileProvider работает
+/// надёжно.
+const _installerChannel = MethodChannel('com.pyrita.pyrita_app/installer');
 
 /// `_log` swallow'ится в release-APK. Используем `print` через
 /// Zone-redirect — он реально пишет в logcat (filterable как 'flutter:I').
@@ -298,18 +306,22 @@ class UpdateService {
       );
     }
 
-    _log('[Update] triggering install intent…');
-    final result = await OpenFilex.open(
-      apk.path,
-      type: 'application/vnd.android.package-archive',
-    );
-    _log('[Update] open result: type=${result.type} message=${result.message}');
-
-    // ResultType.done — installer dialog показан Android'ом. Иначе фейл.
-    if (result.type != ResultType.done) {
+    _log('[Update] triggering native install intent…');
+    try {
+      final ok = await _installerChannel.invokeMethod<bool>(
+        'installApk',
+        {'path': apk.path},
+      );
+      _log('[Update] native intent returned ok=$ok');
+      if (ok != true) {
+        throw StateError(
+          'APK файл не найден или пуст. Попробуйте ещё раз.',
+        );
+      }
+    } on PlatformException catch (e) {
+      _log('[Update] PlatformException: ${e.code} ${e.message}');
       throw StateError(
-        'Системный установщик не открылся '
-        '(${result.type.name}: ${result.message}). '
+        'Не удалось открыть установщик: ${e.message ?? e.code}. '
         'Попробуйте скачать APK через браузер.',
       );
     }

@@ -5,7 +5,7 @@ publish_to: "none"
 # package versioning: <semantic>+<build>
 # Bump <build> (целое число) каждый Android-release — Play и RuStore
 # отказывают APK'у с тем же versionCode что уже опубликован.
-version: 0.1.7+18
+version: 0.1.8+19
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -72,10 +72,10 @@ dependencies:
   # version из pubspec, сравнивает с tag_name latest release'а.
   package_info_plus: ^8.0.0
 
-  # Phase D: открыть скачанный APK через ACTION_VIEW intent.
-  # Triggers Android system installer (юзер видит «Установить?» dialog).
-  # Под капотом — FileProvider + intent с MIME application/vnd.android.package-archive.
-  open_filex: ^4.5.0
+  # Phase D: open_filex был использован для APK install но silent-fail'ил
+  # на Android 14+ Samsung One UI. Заменён на native method channel
+  # `com.pyrita.pyrita_app/installer` в MainActivity.kt (см. v0.1.8
+  # commit + docs).
 
   # Phase D: external cache dir для скачанного APK (нужен FileProvider'у).
   path_provider: ^2.1.5

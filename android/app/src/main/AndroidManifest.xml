@@ -83,6 +83,27 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!--
+            FileProvider для in-app update flow. Authority должна совпадать
+            с MainActivity.kt FILE_PROVIDER_AUTHORITY. exported=false +
+            grantUriPermissions=true — Android требует это для security:
+            content URI's grant'ятся только тем activity'ям которые получают
+            intent (package installer в нашем случае).
+
+            Заменяет open_filex's FileProvider (на Android 14+ Samsung One
+            UI его install intent silent-reject'ил). Native intent в
+            MainActivity.installApk использует этот provider.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.pyrita.pyrita_app.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/pyrita_file_paths" />
+        </provider>
     </application>
 
     <!--
