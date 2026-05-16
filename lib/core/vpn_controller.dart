@@ -604,12 +604,21 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   /// так и switchProtocol (pre-check что preferred protocol реально в
   /// подписке, иначе backend кэширует stale `available=true` flag).
   Future<List<String>> _fetchSubscriptionUrls(String subUrl) async {
+    // Backend 2026-05-16 добавил `?format=singbox` в default subscription_url
+    // (для Hiddify Pro/Max Shield filters). Pyrita-app использует Xray-core
+    // через flutter_v2ray_client и парсит **base64-список** VLESS URL'ов —
+    // sing-box JSON парсить не умеет. Strip query чтобы получить legacy
+    // формат от backend's fallback path.
+    final parsedUri = Uri.parse(subUrl);
+    final legacyUri = parsedUri.replace(queryParameters: const {});
+    final cleanUrl = legacyUri.toString();
+
     final dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 15),
     ));
     final resp = await dio.get<String>(
-      subUrl,
+      cleanUrl,
       options: Options(
         responseType: ResponseType.plain,
         headers: {'User-Agent': 'Pyrita-app/Phase-C'},
@@ -622,7 +631,13 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
 
     final urls = _parseSubscriptionBody(raw);
     if (urls.isEmpty) {
-      throw StateError('В подписке не найдено ни одного протокола');
+      // Diagnostic: если backend опять изменит формат, юзер увидит первые
+      // 200 chars body'а — поможет быстро понять что прилетело.
+      final preview = raw.length > 200 ? '${raw.substring(0, 200)}…' : raw;
+      throw StateError(
+        'В подписке не найдено ни одного протокола. '
+        'Backend ответил: $preview',
+      );
     }
     return urls;
   }
