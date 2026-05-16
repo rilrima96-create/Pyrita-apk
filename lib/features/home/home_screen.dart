@@ -370,10 +370,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ],
                 ),
               ),
-              // Persistent error banner — показывается пока state.errorMessage
-              // не очищен (cleared on next successful connect или новый start).
-              // Виден всегда — не пропадает как snackbar.
-              if (vpnStatus.errorMessage != null && vpnStatus.isError)
+              // Persistent error/info banner — показывается пока
+              // state.errorMessage не очищен. Видим в:
+              //   * isError — fatal connect/handshake failures
+              //   * isConnecting + errorMessage — soft warnings (e.g.
+              //     «Ожидание сети…» когда airplane mode выключен но
+              //     network ещё не вернулся)
+              if (vpnStatus.errorMessage != null &&
+                  (vpnStatus.isError || vpnStatus.isConnecting))
                 Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: PyDS.sp4 + 2,

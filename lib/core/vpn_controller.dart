@@ -375,10 +375,28 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
           events.any((e) => e != ConnectivityResult.none);
 
       if (!hasNetwork) {
-        // Сеть пропала. Запоминаем что туннель был активен — пригодится
-        // когда сеть восстановится.
+        // Сеть пропала. Plugin'у нужно ~10-30 сек чтобы понять что
+        // tunnel умер и emit'нуть DISCONNECTED — в это время state
+        // visual'но остаётся 'connected', а юзер уже видит «нет
+        // интернета» в браузере (фактический tunnel down).
+        //
+        // Forcing state в connecting сразу: visual feedback совпадает
+        // с реальностью, ping снимается, UI показывает «ожидание сети».
+        // Когда сеть вернётся → _autoReconnect полностью перевзведёт
+        // tunnel; если сеть так и не вернулась → state остаётся
+        // connecting + errorMessage пока юзер не tap'нет «отключить».
         if (state.isConnected) {
           _wasConnectedBeforeNetLoss = true;
+          // Прямой конструктор — copyWith использует null-coalescing
+          // и не позволяет очистить serverPingMs (null остаётся sticky).
+          // Также resetим upload/downloadSpeed чтобы UI «zero stream»
+          // matched no-network reality.
+          state = PyritaVpnStatus(
+            state: PyritaVpnState.connecting,
+            errorMessage: 'Ожидание сети…',
+            preferredProtocolId: state.preferredProtocolId,
+          );
+          _stopPingTimer();
         }
         return;
       }
