@@ -272,22 +272,33 @@ class UpdateService {
     }
 
     // Android 8+ REQUEST_INSTALL_PACKAGES. На <8 — auto-granted.
+    // permission_handler v11+ returns isGranted=true для auto-granted на <8.
     final permStatus = await Permission.requestInstallPackages.status;
+    _log('[Update] install-packages permission status: $permStatus');
     if (!permStatus.isGranted) {
       _log('[Update] requesting REQUEST_INSTALL_PACKAGES permission');
       final result = await Permission.requestInstallPackages.request();
+      _log('[Update] permission request result: $result');
       if (!result.isGranted) {
-        // Permission_handler автоматически открыл system Settings page —
-        // юзер сейчас тапает toggle. Когда вернётся в app — пусть нажмёт
-        // «Обновить» снова.
         throw StateError(
-          'Нужно разрешение на установку приложений. Включите его в '
-          'открывшихся настройках и нажмите «Обновить» снова.',
+          'Нужно разрешение «Установка из неизвестных источников». '
+          'В открывшихся настройках Android включите Pyrita и нажмите '
+          '«Обновить» ещё раз.',
         );
       }
     }
 
-    _log('[Update] triggering install intent for ${apk.path}');
+    // Sanity check: APK readable. Иногда external cache очищается
+    // Android'ом между download и install.
+    final size = apk.lengthSync();
+    _log('[Update] APK ready: ${apk.path} size=$size bytes');
+    if (size <= 0) {
+      throw StateError(
+        'Скачанный APK пуст. Попробуйте ещё раз.',
+      );
+    }
+
+    _log('[Update] triggering install intent…');
     final result = await OpenFilex.open(
       apk.path,
       type: 'application/vnd.android.package-archive',
@@ -297,7 +308,8 @@ class UpdateService {
     // ResultType.done — installer dialog показан Android'ом. Иначе фейл.
     if (result.type != ResultType.done) {
       throw StateError(
-        'Системный установщик не открылся (${result.type.name}). '
+        'Системный установщик не открылся '
+        '(${result.type.name}: ${result.message}). '
         'Попробуйте скачать APK через браузер.',
       );
     }

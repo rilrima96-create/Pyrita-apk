@@ -340,24 +340,35 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     _pingTimer?.cancel();
     _pingTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
       try {
-        // Plugin default — https://google.com/generate_204 — блокирован
-        // RKN, через VPN handshake может fail. Используем Cloudflare
-        // (нейтральный, не в RU bypass'е, идёт через tunnel).
+        // Plugin делает HEAD-like request через Xray-core и измеряет
+        // round-trip. Test URL должен (1) идти через tunnel (не direct),
+        // (2) быть consistently available, (3) возвращать 2xx/3xx
+        // быстро.
+        //
+        // History: plugin default `google.com/generate_204` блочится
+        // RKN на mobile carriers (юзер сообщил 2026-05-15). Попробовали
+        // `cloudflare.com/cdn-cgi/trace` — тоже не сработало (-1
+        // в logs). Сейчас `clients3.google.com/generate_204` — endpoint
+        // Android'а для captive-portal detection, доступен из любой
+        // юрисдикции через VPN egress.
         final ms = await _v2ray.getConnectedServerDelay(
-          url: 'https://cloudflare.com/cdn-cgi/trace',
+          url: 'http://clients3.google.com/generate_204',
         );
         if (!mounted || !state.isConnected) return;
         // Plugin возвращает -1 при timeout / failure. Не пишем такие в
         // state — UI рендерит '—' если pingMs null, что точнее чем
         // показывать -1.
         if (ms <= 0) {
-          debugPrint('[VPN] ping returned $ms (timeout or error)');
+          // ignore: avoid_print
+          print('[Pyrita-VPN] ping returned $ms (timeout or error)');
           return;
         }
-        debugPrint('[VPN] ping=$ms ms');
+        // ignore: avoid_print
+        print('[Pyrita-VPN] ping=$ms ms');
         state = state.copyWith(serverPingMs: ms);
       } catch (e) {
-        debugPrint('[VPN] ping exception: $e');
+        // ignore: avoid_print
+        print('[Pyrita-VPN] ping exception: $e');
       }
     });
   }
