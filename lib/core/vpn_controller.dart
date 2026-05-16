@@ -9,6 +9,7 @@ import 'package:flutter_v2ray_client/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
+import 'notification_service.dart';
 
 /// Состояние VPN-туннеля для UI-слоя.
 ///
@@ -303,7 +304,20 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     if (mounted) {
       state = state.copyWith(preferredProtocolId: preferred);
     }
+
+    // Кастомная notification поверх plugin's PRIORITY_MIN. Слушаем
+    // disconnect-tap из шторки → routes сюда → stop() как если бы юзер
+    // тапнул pulse.
+    await PyritaNotificationService.instance.init();
+    _disconnectSub = PyritaNotificationService.instance.disconnectRequests
+        .listen((_) {
+      if (mounted && state.isConnected) {
+        unawaited(stop());
+      }
+    });
   }
+
+  StreamSubscription<void>? _disconnectSub;
 
   void _onStatusChanged(V2RayStatus s) {
     if (!mounted) return;
@@ -329,8 +343,20 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     // Ping-timer работает только когда туннель активен.
     if (mapped == PyritaVpnState.connected) {
       _startPingTimer();
+      // Кастомная notification: ставим как только Xray-core эмитит
+      // CONNECTED. Updates на каждом ping tick'е через
+      // PyritaNotificationService.updatePing (debounced там же).
+      unawaited(PyritaNotificationService.instance.showConnected(
+        pingMs: state.serverPingMs,
+      ));
     } else {
       _stopPingTimer();
+      if (mapped == PyritaVpnState.connecting) {
+        unawaited(PyritaNotificationService.instance.showConnecting());
+      } else {
+        // disconnected / error — убираем notification полностью.
+        unawaited(PyritaNotificationService.instance.hide());
+      }
     }
   }
 
@@ -366,6 +392,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
         // ignore: avoid_print
         print('[Pyrita-VPN] ping=$ms ms');
         state = state.copyWith(serverPingMs: ms);
+        // Notification debounce'ит само если ping не сильно изменился.
+        unawaited(PyritaNotificationService.instance.updatePing(ms));
       } catch (e) {
         // ignore: avoid_print
         print('[Pyrita-VPN] ping exception: $e');
@@ -455,6 +483,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     _stopPingTimer();
     _connSub?.cancel();
     _connSub = null;
+    _disconnectSub?.cancel();
+    _disconnectSub = null;
     super.dispose();
   }
 

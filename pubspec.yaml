@@ -5,7 +5,7 @@ publish_to: "none"
 # package versioning: <semantic>+<build>
 # Bump <build> (целое число) каждый Android-release — Play и RuStore
 # отказывают APK'у с тем же versionCode что уже опубликован.
-version: 0.1.9+20
+version: 0.1.10+21
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -79,6 +79,11 @@ dependencies:
 
   # Phase D: external cache dir для скачанного APK (нужен FileProvider'у).
   path_provider: ^2.1.5
+
+  # Phase D (v0.1.10): кастомная notification поверх plugin's PRIORITY_MIN
+  # (Samsung One UI прячет её под generic "приложение выполняется"). Своя
+  # с PRIORITY_LOW + title "Pyrita · Хельсинки" + action "Отключить".
+  flutter_local_notifications: ^18.0.1
 
 dev_dependencies:
   flutter_test:
