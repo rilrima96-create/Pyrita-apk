@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 /// `_log` swallow'ится в release-APK. Используем `print` через
 /// Zone-redirect — он реально пишет в logcat (filterable как 'flutter:I').
@@ -255,14 +256,50 @@ class UpdateService {
 
   /// Триггерит Android system installer для скачанного APK.
   /// Юзер увидит system dialog «Установить?» и должен accept'нуть.
-  /// Returns:
-  ///   * `OpenResultType.done` — system installer открыт успешно
-  ///   * другое значение — ошибка (permission denied, file not found, ...)
-  Future<OpenResult> installApk(File apk) async {
+  ///
+  /// Pre-conditions проверяемые этим методом:
+  ///   1. APK файл существует
+  ///   2. REQUEST_INSTALL_PACKAGES permission выдан (Android 8+, иначе
+  ///      Android silent reject'ит install intent с no visible feedback)
+  ///   3. OpenFilex.open returns ResultType.done (иначе throw с понятным
+  ///      message'ом — какой именно бы открылся exception)
+  ///
+  /// Если permission не выдан → открываем system Settings page для
+  /// "Install unknown apps" → юзер toggle'ит → возвращается → tap снова.
+  Future<void> installApk(File apk) async {
     if (!apk.existsSync()) {
       throw StateError('APK файл не найден: ${apk.path}');
     }
-    _log('[Update] triggering install for ${apk.path}');
-    return OpenFilex.open(apk.path, type: 'application/vnd.android.package-archive');
+
+    // Android 8+ REQUEST_INSTALL_PACKAGES. На <8 — auto-granted.
+    final permStatus = await Permission.requestInstallPackages.status;
+    if (!permStatus.isGranted) {
+      _log('[Update] requesting REQUEST_INSTALL_PACKAGES permission');
+      final result = await Permission.requestInstallPackages.request();
+      if (!result.isGranted) {
+        // Permission_handler автоматически открыл system Settings page —
+        // юзер сейчас тапает toggle. Когда вернётся в app — пусть нажмёт
+        // «Обновить» снова.
+        throw StateError(
+          'Нужно разрешение на установку приложений. Включите его в '
+          'открывшихся настройках и нажмите «Обновить» снова.',
+        );
+      }
+    }
+
+    _log('[Update] triggering install intent for ${apk.path}');
+    final result = await OpenFilex.open(
+      apk.path,
+      type: 'application/vnd.android.package-archive',
+    );
+    _log('[Update] open result: type=${result.type} message=${result.message}');
+
+    // ResultType.done — installer dialog показан Android'ом. Иначе фейл.
+    if (result.type != ResultType.done) {
+      throw StateError(
+        'Системный установщик не открылся (${result.type.name}). '
+        'Попробуйте скачать APK через браузер.',
+      );
+    }
   }
 }
