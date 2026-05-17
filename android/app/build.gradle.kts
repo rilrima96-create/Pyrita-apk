@@ -26,6 +26,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // flutter_local_notifications 18.0+ требует core library desugaring
+        // — иначе :app:checkReleaseAarMetadata падает с
+        // "Dependency requires core library desugaring to be enabled".
+        // См. https://developer.android.com/studio/write/java8-support.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -86,4 +91,11 @@ android {
 
 flutter {
     source = "../.."
+}
+
+// Desugar runtime для core library desugaring. Включает Stream/Optional/
+// Duration/time API на старых Android SDK level'ах. Требуется
+// flutter_local_notifications 18.0+ (от v0.1.10 onward).
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
