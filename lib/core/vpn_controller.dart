@@ -582,13 +582,13 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
         ),
       );
 
-      // НЕ делаем premature check на state==connected. Plugin сам
-      // emit'ит CONNECTED через onStatusChanged когда handshake завершится.
-      // До этого state остаётся connecting (UI показывает пульсирующий
-      // sonar). Если за минуту CONNECTED не пришёл — это уже network/
-      // server issue, не plugin crash — юзер может сам нажать кнопку
-      // «Долго подключаемся? Показать логи» для диагностики.
-    } catch (e) {
+      // ignore: avoid_print
+      print('[Pyrita-VPN] startV2Ray returned, awaiting CONNECTED status');
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('[Pyrita-VPN] start() exception: ${e.runtimeType}: $e');
+      // ignore: avoid_print
+      print('[Pyrita-VPN] stack: ${st.toString().split('\n').take(5).join(' | ')}');
       if (!mounted) return;
       state = PyritaVpnStatus(
         state: PyritaVpnState.error,
@@ -996,9 +996,14 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   Future<String> get preferredProtocol => _getPreferredProtocol();
 
   String _humanizeError(Object e) {
+    // ignore: avoid_print
+    print('[Pyrita-VPN] _humanizeError input: ${e.runtimeType}: $e');
     if (e is ApiException) return e.message;
     if (e is StateError) return e.message;
     if (e is DioException) return 'Сеть недоступна. Проверьте соединение.';
+    if (e is TimeoutException) {
+      return e.message ?? 'Превышено время ожидания.';
+    }
     return 'Не удалось подключиться: $e';
   }
 }
