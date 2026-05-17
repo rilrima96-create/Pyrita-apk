@@ -139,6 +139,12 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   /// что нужен auto-reconnect когда сеть вернётся.
   bool _wasConnectedBeforeNetLoss = false;
 
+  /// v0.1.16: Completer которым start() ждёт CONNECTED status от плагина.
+  /// _onStatusChanged комплитит его при PyritaVpnState.connected. Permission
+  /// для timeout escape когда протокол broken (XHTTP без ALPN — типичный
+  /// пример: TCP up, traffic flows, но plugin не emit'ит CONNECTED).
+  Completer<void>? _connectedCompleter;
+
   static const _prefKeyPermissionRequested = 'vpn_permission_requested';
 
   /// SharedPreferences key для предпочитаемого протокола. Один из id'шников
@@ -356,6 +362,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
 
     // Ping-timer работает только когда туннель активен.
     if (mapped == PyritaVpnState.connected) {
+      // v0.1.16: разблокируем start()'s await on CONNECTED.
+      if (_connectedCompleter != null && !_connectedCompleter!.isCompleted) {
+        _connectedCompleter!.complete();
+      }
       _startPingTimer();
       // Кастомная notification: ставим как только Xray-core эмитит
       // CONNECTED. Updates на каждом ping tick'е через
@@ -583,6 +593,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       //
       // 60 сек timeout — только для случая если plugin worker process
       // crashes и Future никогда не resolve'ится.
+      // Готовим Completer для CONNECTED-await ПЕРЕД startV2Ray чтобы не
+      // miss'нуть fast-path emit'а (некоторые сети handshake'ятся <100ms).
+      _connectedCompleter ??= Completer<void>();
+
       await _v2ray.startV2Ray(
         remark: 'Pyrita · Хельсинки',
         config: config,
@@ -598,6 +612,45 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
 
       // ignore: avoid_print
       print('[Pyrita-VPN] startV2Ray returned, awaiting CONNECTED status');
+
+      // v0.1.16: 30-сек deadline на CONNECTED status. Без этого юзер,
+      // переключившийся на сломанный протокол (например XHTTP с ALPN
+      // mismatch на старом backend) застревает в forever-CONNECTING:
+      // big button не реагирует, Settings не прогружаются (HTTP-запросы
+      // тайм-аутят через dead tunnel), recovery возможен только через
+      // adb force-stop или uninstall.
+      //
+      // На timeout: stop tunnel + revert preferred protocol на 'reality'
+      // (которая всегда работает) + throw error. Юзер видит понятный
+      // banner «Протокол не отвечает, вернули Reality».
+      try {
+        await _connectedCompleter!.future.timeout(
+          const Duration(seconds: 30),
+        );
+      } on TimeoutException {
+        final failedProtocol = await _getPreferredProtocol();
+        // ignore: avoid_print
+        print('[Pyrita-VPN] CONNECTED timeout (30s) for protocol=$failedProtocol; reverting to reality');
+        await _v2ray.stopV2Ray().catchError((_) {});
+        // Reset preferred → Reality чтобы next start() взял рабочий
+        // протокол. Если failed = reality сам — оставляем (значит сеть
+        // в целом плохая, fallback'ать некуда).
+        if (failedProtocol != _defaultProtocol) {
+          await _setPreferredProtocol(_defaultProtocol);
+          if (mounted) {
+            state = state.copyWith(preferredProtocolId: _defaultProtocol);
+          }
+        }
+        throw TimeoutException(
+          failedProtocol == _defaultProtocol
+              ? 'Сервер не ответил за 30 сек. Проверьте сеть.'
+              : 'Протокол ${_protocolHumanName(failedProtocol)} не подключается. '
+                  'Вернули VLESS Reality.',
+          const Duration(seconds: 30),
+        );
+      } finally {
+        _connectedCompleter = null;
+      }
     } catch (e, st) {
       // ignore: avoid_print
       print('[Pyrita-VPN] start() exception: ${e.runtimeType}: $e');
@@ -883,6 +936,21 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       'mode': mode,
     };
 
+    // Defense-in-depth: если URL не передал alpn (backend bug или старая
+    // подписка) — добавляем h2,http/1.1 потому что server-side обычно
+    // требует HTTP/2 для xhttp transport. ALPN missing на TLS-handshake →
+    // server reject'ит connection silently → user видит «вечный connecting».
+    final tlsSettings = streamSettings['tlsSettings'];
+    if (tlsSettings is Map) {
+      final currentAlpn = tlsSettings['alpn'];
+      if (currentAlpn == null ||
+          (currentAlpn is List && currentAlpn.isEmpty)) {
+        tlsSettings['alpn'] = <String>['h2', 'http/1.1'];
+        // ignore: avoid_print
+        print('[Pyrita-VPN] XHTTP TLS alpn injected (default h2,http/1.1)');
+      }
+    }
+
     // ignore: avoid_print
     print('[Pyrita-VPN] XHTTP settings injected: path=$path host=$hostHeader mode=$mode');
   }
@@ -1011,6 +1079,17 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefKeyPreferredProtocol, id);
   }
+
+  /// Human-readable имя протокола для error-banner'ов. Hardcoded короткий
+  /// маппинг — без API round-trip'а в момент error-display'а.
+  String _protocolHumanName(String id) => switch (id) {
+        'reality' => 'VLESS Reality',
+        'xhttp' => 'VLESS XHTTP',
+        'hysteria2' => 'Hysteria 2',
+        'tuic' => 'TUIC',
+        'ss2022' => 'Shadowsocks 2022',
+        _ => id,
+      };
 
   /// Переключает preferred protocol. Если currently connected — gracefully
   /// reconnect через 1.5 сек (даёт Xray time на cleanup TUN-interface'а).
