@@ -305,16 +305,30 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       state = state.copyWith(preferredProtocolId: preferred);
     }
 
-    // Кастомная notification поверх plugin's PRIORITY_MIN. Слушаем
+    // Кастомная notification поверх plugin's PRIORITY_MIN. Slушаем
     // disconnect-tap из шторки → routes сюда → stop() как если бы юзер
     // тапнул pulse.
-    await PyritaNotificationService.instance.init();
-    _disconnectSub = PyritaNotificationService.instance.disconnectRequests
-        .listen((_) {
-      if (mounted && state.isConnected) {
-        unawaited(stop());
-      }
-    });
+    //
+    // v0.1.13: wrap'аем в try-catch потому что flutter_local_notifications
+    // throws PlatformException(invalid_icon) на некоторых Samsung-устройствах
+    // в release build даже когда resource ic_notification реально присутствует
+    // в drawable*/ folders. Это блокировало весь _init() → start() catches →
+    // юзер видел «Не удалось подключиться» без возможности запустить VPN
+    // вообще. Если notification setup fails — продолжаем без него, юзер
+    // видит plugin's стандартный PRIORITY_MIN notification (без custom title/
+    // disconnect button — но VPN работает).
+    try {
+      await PyritaNotificationService.instance.init();
+      _disconnectSub = PyritaNotificationService.instance.disconnectRequests
+          .listen((_) {
+        if (mounted && state.isConnected) {
+          unawaited(stop());
+        }
+      });
+    } catch (e) {
+      // ignore: avoid_print
+      print('[Pyrita-VPN] notification overlay init failed (non-fatal): $e');
+    }
   }
 
   StreamSubscription<void>? _disconnectSub;

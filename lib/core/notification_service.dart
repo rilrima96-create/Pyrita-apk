@@ -45,6 +45,15 @@ class PyritaNotificationService {
 
   /// One-time setup: создаёт notification channel + registriрует
   /// action handler. Безопасно вызывать многократно.
+  ///
+  /// v0.1.13: ловим PlatformException(invalid_icon) который иногда
+  /// бросает plugin на release-сборках Samsung (resource ic_notification
+  /// в drawable folders, но plugin's getIdentifier() возвращает 0).
+  /// Каждый из плагиновых call'ов wrap'нут отдельным catch чтобы partial
+  /// success — например initialize() OK, createChannel fails — оставлял
+  /// app в functional state. Полный fail тоже non-fatal: VpnController
+  /// просто не получит disconnectRequests stream, юзер видит plugin's
+  /// PRIORITY_MIN notification (стандартное Android поведение).
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
@@ -52,28 +61,39 @@ class PyritaNotificationService {
     const androidInit = AndroidInitializationSettings('ic_notification');
     const initSettings = InitializationSettings(android: androidInit);
 
-    await _plugin.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: _onActionTapped,
-    );
+    try {
+      await _plugin.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: _onActionTapped,
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('[PyritaNotif] plugin.initialize() failed (non-fatal): $e');
+      return; // нет смысла продолжать к createChannel — plugin не готов
+    }
 
-    // Создаём channel явно (Android 8+). Не делаем на channel'е
-    // звуки/vibrate — это persistent status notification, не alert.
-    final androidImpl = _plugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
-    await androidImpl?.createNotificationChannel(
-      const AndroidNotificationChannel(
-        _channelId,
-        _channelName,
-        description: _channelDescription,
-        importance: Importance.low, // = PRIORITY_LOW
-        playSound: false,
-        enableVibration: false,
-        showBadge: false,
-      ),
-    );
+    try {
+      // Создаём channel явно (Android 8+). Не делаем на channel'е
+      // звуки/vibrate — это persistent status notification, не alert.
+      final androidImpl = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+      await androidImpl?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _channelId,
+          _channelName,
+          description: _channelDescription,
+          importance: Importance.low, // = PRIORITY_LOW
+          playSound: false,
+          enableVibration: false,
+          showBadge: false,
+        ),
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('[PyritaNotif] createNotificationChannel failed (non-fatal): $e');
+    }
   }
 
   /// Callback на нашу dart-side. Юзер тапнул "Отключить" → action ID
@@ -92,16 +112,23 @@ class PyritaNotificationService {
   }
 
   /// Показать notification «Подключено» с текущим ping'ом.
+  /// v0.1.13: catch'аем PlatformException чтобы failure не break'нула
+  /// VPN flow (см. comment в init()).
   Future<void> showConnected({String serverName = 'Хельсинки', int? pingMs}) async {
     await init();
     _lastPingMs = pingMs;
     final pingStr = pingMs != null ? ' · $pingMs мс' : '';
-    await _plugin.show(
-      _notificationId,
-      'Pyrita · $serverName',
-      'Подключено$pingStr',
-      _details(),
-    );
+    try {
+      await _plugin.show(
+        _notificationId,
+        'Pyrita · $serverName',
+        'Подключено$pingStr',
+        _details(),
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('[PyritaNotif] showConnected failed (non-fatal): $e');
+    }
   }
 
   /// Update только если ping реально изменился (debounce шторки от
@@ -114,12 +141,17 @@ class PyritaNotificationService {
     if (pingMs != null && prev != null && (pingMs - prev).abs() < 5) return;
     _lastPingMs = pingMs;
     final pingStr = pingMs != null ? ' · $pingMs мс' : '';
-    await _plugin.show(
-      _notificationId,
-      'Pyrita · Хельсинки',
-      'Подключено$pingStr',
-      _details(),
-    );
+    try {
+      await _plugin.show(
+        _notificationId,
+        'Pyrita · Хельсинки',
+        'Подключено$pingStr',
+        _details(),
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('[PyritaNotif] updatePing failed (non-fatal): $e');
+    }
   }
 
   /// Показать «Подключение…» — без disconnect action (юзер ещё не
@@ -127,19 +159,29 @@ class PyritaNotificationService {
   Future<void> showConnecting() async {
     await init();
     _lastPingMs = null;
-    await _plugin.show(
-      _notificationId,
-      'Pyrita',
-      'Подключение…',
-      _details(includeAction: false),
-    );
+    try {
+      await _plugin.show(
+        _notificationId,
+        'Pyrita',
+        'Подключение…',
+        _details(includeAction: false),
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('[PyritaNotif] showConnecting failed (non-fatal): $e');
+    }
   }
 
   /// Скрыть notification полностью (VPN disconnected).
   Future<void> hide() async {
     if (!_initialized) return;
     _lastPingMs = null;
-    await _plugin.cancel(_notificationId);
+    try {
+      await _plugin.cancel(_notificationId);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[PyritaNotif] hide failed (non-fatal): $e');
+    }
   }
 
   NotificationDetails _details({bool includeAction = true}) {
