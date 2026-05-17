@@ -755,6 +755,27 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     // Plugin's libv2ray.aar v26.4.17 должна support XTLS — verified что
     // Xray Go binary стартует и pipes traffic через uplink.
 
+    // PLUGIN BUG WORKAROUND #2 — XHTTP transport support:
+    //
+    // flutter_v2ray_client v3.2.0 plugin's `populateTransportSettings` ничего
+    // не знает про `type=xhttp` (поддержки до сих пор не вмёрджено в plugin —
+    // xray-core 1.8.10+ её добавил, plugin отстаёт). Plugin'овский parser
+    // выставляет `streamSettings.network = 'xhttp'` (вот это работает —
+    // network устанавливается «как есть» из URL query 'type'), но **не**
+    // добавляет `xhttpSettings` блок, без которого xray-core не знает path/host
+    // для HTTP/2 stream'а → connect fails с `unable to use xhttp transport
+    // without proper settings`.
+    //
+    // Мы вручную инжектим xhttpSettings блок из URL query params после
+    // parseFromURL. Также убираем `streamSettings.tcpSettings` если оно
+    // случайно осталось (фалбэк-результат tcp-branch'а в plugin).
+    //
+    // SNI/TLS: plugin'овский populateTlsSettings ставит `serverName = sni` и
+    // `fingerprint` корректно — оставляем как есть.
+    if (vlessUrl.startsWith('vless://') && vlessUrl.contains('type=xhttp')) {
+      _injectXHttpSettings(configMap, vlessUrl);
+    }
+
     // Routing:
     //
     // 1. UDP/443 → blackhole. КРИТИЧЕСКИ ВАЖНО для XTLS Vision.
@@ -801,6 +822,69 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     };
 
     return jsonEncode(configMap);
+  }
+
+  /// Patches the outbound's streamSettings с правильным `xhttpSettings`
+  /// блоком из query params VLESS XHTTP URL. См. PLUGIN BUG WORKAROUND #2
+  /// в [_buildXrayConfig].
+  ///
+  /// Структура xhttpSettings ожидаемая xray-core 1.8.10+:
+  ///
+  /// ```json
+  /// "streamSettings": {
+  ///   "network": "xhttp",          // уже выставлено plugin'ом
+  ///   "security": "tls",           // уже выставлено plugin'ом
+  ///   "tlsSettings": { ... },      // уже выставлено plugin'ом
+  ///   "xhttpSettings": {           // <-- мы добавляем это
+  ///     "path": "/pyrita-x-...",
+  ///     "host": "pyrita.com",
+  ///     "mode": "auto"
+  ///   }
+  /// }
+  /// ```
+  ///
+  /// Если URL malformed (нет path / host params) — оставляем как есть
+  /// (xray-core sам decline'нет, ошибка увидится в _humanizeError).
+  void _injectXHttpSettings(Map<String, dynamic> configMap, String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+
+    final path = uri.queryParameters['path'];
+    if (path == null || !path.startsWith('/')) {
+      // Без path xray-core не сможет route'ить request — лог-warning,
+      // но не throw'аем (let xray-core fail с понятной ошибкой).
+      // ignore: avoid_print
+      print('[Pyrita-VPN] XHTTP URL missing valid path: $url');
+      return;
+    }
+    final hostHeader = uri.queryParameters['host'] ??
+        uri.queryParameters['sni'] ??
+        uri.host;
+    final mode = uri.queryParameters['mode'] ?? 'auto';
+
+    final outbounds = configMap['outbounds'] as List?;
+    if (outbounds == null || outbounds.isEmpty) return;
+    final firstOut = outbounds.firstWhere(
+      (o) => o is Map && (o['tag'] == 'proxy' || o['protocol'] == 'vless'),
+      orElse: () => outbounds[0],
+    );
+    if (firstOut is! Map) return;
+
+    final streamSettings = firstOut['streamSettings'];
+    if (streamSettings is! Map) return;
+
+    // Чистим tcpSettings если оно есть — plugin может ошибочно выставить
+    // как fallback (default branch в populateTransportSettings).
+    streamSettings.remove('tcpSettings');
+
+    streamSettings['xhttpSettings'] = <String, dynamic>{
+      'path': path,
+      'host': hostHeader,
+      'mode': mode,
+    };
+
+    // ignore: avoid_print
+    print('[Pyrita-VPN] XHTTP settings injected: path=$path host=$hostHeader mode=$mode');
   }
 
   /// Marzban sub может прийти как plain text или base64 (зависит от
