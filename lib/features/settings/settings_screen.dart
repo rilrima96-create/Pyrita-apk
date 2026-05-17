@@ -1436,7 +1436,7 @@ class _AboutFooter extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(
-            'Pyrita Android · v0.1.11',
+            'Pyrita Android · v0.1.12',
             style: PyDS.font(
               size: 10.5,
               weight: FontWeight.w600,

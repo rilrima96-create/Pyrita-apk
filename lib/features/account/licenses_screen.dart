@@ -111,7 +111,7 @@ class LicensesScreen extends StatelessWidget {
                           showLicensePage(
                             context: context,
                             applicationName: 'Pyrita',
-                            applicationVersion: '0.1.11',
+                            applicationVersion: '0.1.12',
                           );
                         },
                         icon: const Icon(
