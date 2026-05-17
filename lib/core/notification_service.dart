@@ -224,7 +224,18 @@ class PyritaNotificationService {
                   'action_disconnect',
                   'Отключить',
                   cancelNotification: false,
-                  showsUserInterface: false,
+                  // v0.1.17: showsUserInterface=true НЕОБХОДИМ чтобы
+                  // tap из background panel'а сработал. С false-ом
+                  // flutter_local_notifications routes action callback
+                  // ТОЛЬКО в foreground isolate (onDidReceiveNotification-
+                  // Response). Если app свёрнут — callback в background
+                  // isolate, которого мы не зарегали → tap молча теряется.
+                  //
+                  // С true=, тап брингает activity в foreground (через
+                  // standard launch intent), потом foreground callback
+                  // фиренёт _onActionTapped → emit'нёт в disconnectRequests
+                  // stream → VpnController.stop() actually runs.
+                  showsUserInterface: true,
                 ),
               ]
             : <AndroidNotificationAction>[],
