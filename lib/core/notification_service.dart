@@ -41,6 +41,7 @@ class PyritaNotificationService {
   final _plugin = FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
+  bool _pluginUnusable = false; // v0.1.14: stop spamming logs if init failed
   int? _lastPingMs;
 
   /// One-time setup: создаёт notification channel + registriрует
@@ -58,7 +59,18 @@ class PyritaNotificationService {
     if (_initialized) return;
     _initialized = true;
 
-    const androidInit = AndroidInitializationSettings('ic_notification');
+    // v0.1.14: переключились на `ic_launcher_foreground` потому что наш
+    // `ic_notification.png/.xml` по неизвестной причине не попадает в
+    // release APK (aapt2 dump подтвердил отсутствие resource'а несмотря на
+    // git tracking + правильные размеры PNG в drawable-*dpi). Возможно AGP
+    // 8.11.1 строит resource graph и оптимизирует "unused" PNGs которые
+    // не referenced ни одним XML.
+    //
+    // `ic_launcher_foreground` гарантированно в APK (создаётся
+    // flutter_launcher_icons из assets/images/icon-launcher-foreground.png).
+    // Status bar на API 21+ использует только alpha-channel — даёт
+    // silhouette pyrite cube'а на белом, читается корректно.
+    const androidInit = AndroidInitializationSettings('ic_launcher_foreground');
     const initSettings = InitializationSettings(android: androidInit);
 
     try {
@@ -69,6 +81,7 @@ class PyritaNotificationService {
     } catch (e) {
       // ignore: avoid_print
       print('[PyritaNotif] plugin.initialize() failed (non-fatal): $e');
+      _pluginUnusable = true; // v0.1.14: don't retry on every showConnected
       return; // нет смысла продолжать к createChannel — plugin не готов
     }
 
@@ -116,6 +129,7 @@ class PyritaNotificationService {
   /// VPN flow (см. comment в init()).
   Future<void> showConnected({String serverName = 'Хельсинки', int? pingMs}) async {
     await init();
+    if (_pluginUnusable) return; // v0.1.14: skip silently if init failed
     _lastPingMs = pingMs;
     final pingStr = pingMs != null ? ' · $pingMs мс' : '';
     try {
@@ -128,6 +142,7 @@ class PyritaNotificationService {
     } catch (e) {
       // ignore: avoid_print
       print('[PyritaNotif] showConnected failed (non-fatal): $e');
+      _pluginUnusable = true; // если show() кидает — больше не пытаемся
     }
   }
 
@@ -135,7 +150,7 @@ class PyritaNotificationService {
   /// frequent re-render'ов каждые 5 сек). Tolerance 5 мс — sub-noise
   /// не релевантен юзеру.
   Future<void> updatePing(int? pingMs) async {
-    if (!_initialized) return;
+    if (!_initialized || _pluginUnusable) return;
     final prev = _lastPingMs;
     if (pingMs == null && prev == null) return;
     if (pingMs != null && prev != null && (pingMs - prev).abs() < 5) return;
@@ -151,6 +166,7 @@ class PyritaNotificationService {
     } catch (e) {
       // ignore: avoid_print
       print('[PyritaNotif] updatePing failed (non-fatal): $e');
+      _pluginUnusable = true;
     }
   }
 
@@ -158,6 +174,7 @@ class PyritaNotificationService {
   /// connected, отключать нечего; ставит pulse в idle).
   Future<void> showConnecting() async {
     await init();
+    if (_pluginUnusable) return;
     _lastPingMs = null;
     try {
       await _plugin.show(
@@ -169,6 +186,7 @@ class PyritaNotificationService {
     } catch (e) {
       // ignore: avoid_print
       print('[PyritaNotif] showConnecting failed (non-fatal): $e');
+      _pluginUnusable = true;
     }
   }
 
@@ -199,7 +217,7 @@ class PyritaNotificationService {
         showWhen: false,
         category: AndroidNotificationCategory.service,
         visibility: NotificationVisibility.public,
-        icon: 'ic_notification',
+        icon: 'ic_launcher_foreground', // v0.1.14: см. comment в init()
         actions: includeAction
             ? <AndroidNotificationAction>[
                 const AndroidNotificationAction(
