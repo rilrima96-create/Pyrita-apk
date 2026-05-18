@@ -24,9 +24,8 @@ import '../../shared/widgets/py_tab_bar.dart';
 ///   4. Tap на длительность × провайдер → POST /api/checkout/create →
 ///      launchUrl externalApplication mode → юзер платит
 ///
-/// Trial-юзеры (effective_tier='pro', tier='free') показывают Free как
-/// current с trial-плашкой; могут upgrade'нуть до paid Pro/Max не
-/// дожидаясь окончания trial'а (backend засчитывает разницу).
+/// Trial-юзеры (effective_tier='pro', tier='free') получают Pro-доступ,
+/// поэтому экран оплаты подсвечивает Pro как пробный доступ, не Free.
 class CheckoutScreen extends ConsumerStatefulWidget {
   const CheckoutScreen({super.key});
 
@@ -39,12 +38,10 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   /// чтобы saving callout сразу visible.
   bool _annual = true;
 
-  /// Текущий tier юзера для подсветки активной карточки.
+  /// Текущий видимый tier юзера для подсветки активной карточки.
   /// Загружаем через /api/me на initState. До загрузки — null (skeleton).
-  /// Для trial-юзеров (tier='free' + trial_ends_at > now) показываем Free
-  /// как current — backend всё ещё считает их Free, trial mimics Pro
-  /// только для VPN-config'а.
   String? _currentTier;
+  bool _isTrial = false;
 
   @override
   void initState() {
@@ -56,7 +53,14 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     try {
       final me = await ApiClient.instance.getMe();
       if (!mounted) return;
-      setState(() => _currentTier = me['tier'] as String?);
+      final status = me['subscription_status'];
+      final isTrial = status is Map && status['kind'] == 'trial';
+      setState(() {
+        _isTrial = isTrial;
+        _currentTier = isTrial
+            ? (me['effective_tier'] as String? ?? 'pro')
+            : me['tier'] as String?;
+      });
     } on ApiException catch (e) {
       if (!mounted) return;
       if (e.statusCode == 401) {
@@ -108,18 +112,22 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                             tier: _PricingTier.free,
                             annual: _annual,
                             isCurrent: _currentTier == 'free',
+                            currentLabel: 'ВАШ ПЛАН',
                           ),
                           const SizedBox(height: PyDS.sp3),
                           _TierCard(
                             tier: _PricingTier.pro,
                             annual: _annual,
                             isCurrent: _currentTier == 'pro',
+                            currentLabel:
+                                _isTrial ? 'ПРОБНЫЙ ДОСТУП' : 'ВАШ ПЛАН',
                           ),
                           const SizedBox(height: PyDS.sp3),
                           _TierCard(
                             tier: _PricingTier.max,
                             annual: _annual,
                             isCurrent: _currentTier == 'max',
+                            currentLabel: 'ВАШ ПЛАН',
                           ),
                         ],
                       ),
@@ -405,11 +413,13 @@ class _TierCard extends StatelessWidget {
     required this.tier,
     required this.annual,
     required this.isCurrent,
+    required this.currentLabel,
   });
 
   final _PricingTier tier;
   final bool annual;
   final bool isCurrent;
+  final String currentLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -458,7 +468,7 @@ class _TierCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(PyDS.rPill),
                   ),
                   child: Text(
-                    'ВАШ ПЛАН',
+                    currentLabel,
                     style: PyDS.font(
                       size: 9.5,
                       weight: FontWeight.w700,
@@ -529,7 +539,7 @@ class _TierCard extends StatelessWidget {
           if (meta.durations != null) ...[
             const SizedBox(height: PyDS.sp3 - 2),
             PyButtonGold(
-              label: 'Оформить',
+              label: isCurrent ? 'Продлить' : 'Оформить',
               icon: const Icon(Icons.arrow_forward_rounded,
                   size: 16, color: Color(0xFF1A140A)),
               height: 44,

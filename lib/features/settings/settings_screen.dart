@@ -95,39 +95,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ],
                     const _SectionTitle('Протоколы'),
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: PyDS.sp4 + 2),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
                       child: _ProtocolList(
                         protocols: _protocols,
                         onReload: _loadProtocols,
                       ),
                     ),
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        PyDS.sp4 + 6,
-                        PyDS.sp2,
-                        PyDS.sp4 + 6,
-                        0,
-                      ),
-                      child: Text(
-                        'Pyrita раздаёт подписку со всеми доступными '
-                        'протоколами. На этом устройстве активен VLESS Reality — '
-                        'основной протокол с DPI-устойчивым handshake. '
-                        'Тапни на доступный протокол — переключимся.',
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: PyDS.textFaint,
-                          height: 1.4,
-                        ),
-                      ),
-                    ),
+                    _ProtocolHelpText(protocols: _protocols),
                     const _SectionTitle('Ссылка подписки'),
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: PyDS.sp4 + 2),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
                       child: _SubscriptionLinkCard(
-                        subscriptionUrl:
-                            _me?['subscription_url'] as String?,
+                        subscriptionUrl: _me?['subscription_url'] as String?,
                         onRegenerated: _loadMe,
                       ),
                     ),
@@ -138,14 +119,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     const _SectionTitle('Помощь'),
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: PyDS.sp4 + 2),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
                       child: const _HelpCard(),
                     ),
                     const _SectionTitle('Уведомления'),
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: PyDS.sp4 + 2),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
                       child: _NewsletterCard(
                         initialOptIn:
                             (_me?['newsletter_opt_in'] as int? ?? 1) == 1,
@@ -167,8 +148,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     const SizedBox(height: PyDS.sp3),
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: PyDS.sp4 + 2),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
                       child: _DeleteAccountCard(email: _email),
                     ),
                     const SizedBox(height: PyDS.sp5),
@@ -288,8 +269,7 @@ class _UpdateCardState extends State<_UpdateCard> {
       _info = info;
       _phase = 'idle';
       if (info == null) {
-        _error =
-            'Не удалось проверить обновления. Проверьте интернет.';
+        _error = 'Не удалось проверить обновления. Проверьте интернет.';
       }
     });
   }
@@ -472,8 +452,8 @@ class _UpdateCardState extends State<_UpdateCard> {
             if (info.releaseNotes.isNotEmpty) ...[
               const SizedBox(height: PyDS.sp2),
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
                   color: PyDS.bg,
                   borderRadius: BorderRadius.circular(PyDS.rSm),
@@ -727,6 +707,53 @@ class _ProtocolList extends StatelessWidget {
 }
 
 const _switchableProtocolIds = {'reality', 'xhttp'};
+
+class _ProtocolHelpText extends ConsumerWidget {
+  const _ProtocolHelpText({required this.protocols});
+
+  final List<ProtocolInfo>? protocols;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final preferred =
+        ref.watch(vpnControllerProvider.select((s) => s.preferredProtocolId));
+    final activeName = _activeProtocolName(protocols, preferred);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        PyDS.sp4 + 6,
+        PyDS.sp2,
+        PyDS.sp4 + 6,
+        0,
+      ),
+      child: Text(
+        'Pyrita раздаёт подписку со всеми доступными протоколами. '
+        'На этом устройстве активен $activeName. '
+        'Тапни на доступный протокол — переключимся.',
+        style: const TextStyle(
+          fontSize: 11.5,
+          color: PyDS.textFaint,
+          height: 1.4,
+        ),
+      ),
+    );
+  }
+
+  static String _fallbackProtocolName(String id) => switch (id) {
+        'xhttp' => 'VLESS XHTTP',
+        'reality' => 'VLESS Reality',
+        _ => id,
+      };
+
+  static String _activeProtocolName(List<ProtocolInfo>? protocols, String id) {
+    if (protocols != null) {
+      for (final protocol in protocols) {
+        if (protocol.id == id) return protocol.name;
+      }
+    }
+    return _fallbackProtocolName(id);
+  }
+}
 
 class _ProtocolRow extends ConsumerStatefulWidget {
   const _ProtocolRow({
@@ -1210,8 +1237,8 @@ class _SubscriptionLinkCardState extends State<_SubscriptionLinkCard> {
           PyButtonGhost(
             label: 'Скопировать ссылку',
             onPressed: url == null ? null : _copy,
-            icon: const Icon(Icons.content_copy,
-                size: 14, color: PyDS.goldLight),
+            icon:
+                const Icon(Icons.content_copy, size: 14, color: PyDS.goldLight),
             height: 42,
             fontSize: 13,
             color: PyDS.goldLight,
