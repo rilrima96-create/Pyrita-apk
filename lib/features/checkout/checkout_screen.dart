@@ -18,7 +18,7 @@ import '../../shared/widgets/py_tab_bar.dart';
 ///   2. 3 vertical cards (full-width на mobile):
 ///      • Pyrita Free — без кнопок (актуальный плюс trial state)
 ///      • Pyrita Pro (featured) — golden border + «Безлимит, 3 устройства…»
-///      • Pyrita Max — Pro + 6 устройств + ручной выбор сервера
+///      • Pyrita Max — Pro + 6 устройств + ручной выбор протокола
 ///   3. На карточке Pro/Max — кнопка «Подробно» → bottom sheet с 4
 ///      длительностями + 2 провайдерами (Lava / CryptoCloud)
 ///   4. Tap на длительность × провайдер → POST /api/checkout/create →
@@ -100,8 +100,8 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                     ),
                     const SizedBox(height: PyDS.sp3),
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: PyDS.sp4 + 2),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
                       child: Column(
                         children: [
                           _TierCard(
@@ -158,7 +158,7 @@ class _Hero extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Free, чтобы попробовать.\nPro — для повседневного.',
+          'Free, чтобы попробовать.\nPro — для повседневного.\nMax — когда нужен контроль.',
           style: PyDS.font(
             size: 22,
             weight: FontWeight.w800,
@@ -169,7 +169,7 @@ class _Hero extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Text(
-          'Один аккаунт — все ваши устройства. '
+          'Лимит зависит от тарифа: Free — 1, Pro — 3, Max — 6 устройств. '
           'Российские сайты всегда напрямую.',
           style: PyDS.font(
             size: 13,
@@ -342,7 +342,7 @@ class _TierMeta {
             features: [
               'Безлимит трафика',
               '3 устройства',
-              '5 серверов · 5 протоколов',
+              'Несколько протоколов · auto-failover',
               'Блок рекламы, трекинга, малвари',
               '7 дней на возврат',
             ],
@@ -350,7 +350,8 @@ class _TierMeta {
               _Duration('pro-1m', '1 месяц', 199, perMonth: 199),
               _Duration('pro-3m', '3 месяца', 500, perMonth: 167, savePct: 16),
               _Duration('pro-6m', '6 месяцев', 900, perMonth: 150, savePct: 25),
-              _Duration('pro-12m', '12 месяцев', 1500, perMonth: 125, savePct: 37),
+              _Duration('pro-12m', '12 месяцев', 1500,
+                  perMonth: 125, savePct: 37),
             ],
           ),
         _PricingTier.max => const _TierMeta(
@@ -366,14 +367,16 @@ class _TierMeta {
             features: [
               'Всё из Pro',
               '6 устройств',
-              'Ручной выбор сервера/протокола',
-              'Резервный канал (whitelist-bypass)',
+              'Ручной выбор протокола',
+              'Приоритетная поддержка',
             ],
             durations: [
               _Duration('max-1m', '1 месяц', 399, perMonth: 399),
               _Duration('max-3m', '3 месяца', 1000, perMonth: 333, savePct: 16),
-              _Duration('max-6m', '6 месяцев', 1900, perMonth: 317, savePct: 21),
-              _Duration('max-12m', '12 месяцев', 3500, perMonth: 292, savePct: 27),
+              _Duration('max-6m', '6 месяцев', 1900,
+                  perMonth: 317, savePct: 21),
+              _Duration('max-12m', '12 месяцев', 3500,
+                  perMonth: 292, savePct: 27),
             ],
           ),
       };
@@ -448,8 +451,8 @@ class _TierCard extends StatelessWidget {
               ),
               if (isCurrent)
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: PyDS.gold.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(PyDS.rPill),
@@ -741,13 +744,11 @@ class _PaymentPickerSheetState extends State<_PaymentPickerSheet> {
           if (_error != null) ...[
             const SizedBox(height: PyDS.sp3),
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: PyDS.danger.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(PyDS.rSm),
-                border: Border.all(
-                    color: PyDS.danger.withValues(alpha: 0.35)),
+                border: Border.all(color: PyDS.danger.withValues(alpha: 0.35)),
               ),
               child: Text(
                 _error!,

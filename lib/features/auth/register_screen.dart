@@ -116,7 +116,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         color: PyDS.textSoft,
                       ),
                       children: [
-                        const TextSpan(text: '14 дней '),
+                        const TextSpan(text: '7 дней '),
                         TextSpan(
                           text: 'бесплатно',
                           style: PyDS.font(
@@ -207,11 +207,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                                   height: 18,
                                   margin: const EdgeInsets.only(top: 2),
                                   decoration: BoxDecoration(
-                                    gradient:
-                                        _accept ? PyDS.gradGold : null,
+                                    gradient: _accept ? PyDS.gradGold : null,
                                     color: _accept ? null : PyDS.bg2,
-                                    borderRadius:
-                                        BorderRadius.circular(5),
+                                    borderRadius: BorderRadius.circular(5),
                                     border: Border.all(
                                       color: _accept
                                           ? Colors.transparent
@@ -253,8 +251,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                               border: Border.all(
                                 color: PyDS.danger.withValues(alpha: 0.4),
                               ),
-                              borderRadius:
-                                  BorderRadius.circular(PyDS.rMd),
+                              borderRadius: BorderRadius.circular(PyDS.rMd),
                             ),
                             child: Row(
                               children: [
