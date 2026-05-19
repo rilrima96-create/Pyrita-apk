@@ -727,9 +727,7 @@ class _ProtocolHelpText extends ConsumerWidget {
         0,
       ),
       child: Text(
-        'Pyrita раздаёт подписку со всеми доступными протоколами. '
-        'На этом устройстве активен $activeName. '
-        'Тапни на доступный протокол — переключимся.',
+        'Активен $activeName. Тапните на доступный протокол, чтобы переключиться.',
         style: const TextStyle(
           fontSize: 11.5,
           color: PyDS.textFaint,

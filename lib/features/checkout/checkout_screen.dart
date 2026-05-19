@@ -92,7 +92,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                       ),
                       child: _Hero(),
                     ),
-                    const SizedBox(height: PyDS.sp4),
+                    const SizedBox(height: PyDS.sp3),
                     Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: PyDS.sp4 + 2,
@@ -114,7 +114,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                             isCurrent: _currentTier == 'free',
                             currentLabel: 'ВАШ ПЛАН',
                           ),
-                          const SizedBox(height: PyDS.sp3),
+                          const SizedBox(height: 10),
                           _TierCard(
                             tier: _PricingTier.pro,
                             annual: _annual,
@@ -122,7 +122,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                             currentLabel:
                                 _isTrial ? 'ПРОБНЫЙ ДОСТУП' : 'ВАШ ПЛАН',
                           ),
-                          const SizedBox(height: PyDS.sp3),
+                          const SizedBox(height: 10),
                           _TierCard(
                             tier: _PricingTier.max,
                             annual: _annual,
@@ -168,10 +168,10 @@ class _Hero extends StatelessWidget {
         Text(
           'Free, чтобы попробовать.\nPro — для повседневного.\nMax — когда нужен контроль.',
           style: PyDS.font(
-            size: 22,
+            size: 20.5,
             weight: FontWeight.w800,
-            letterSpacing: -0.5,
-            height: 1.2,
+            letterSpacing: -0.35,
+            height: 1.18,
             color: PyDS.text,
           ),
         ),
@@ -180,9 +180,9 @@ class _Hero extends StatelessWidget {
           'Лимит зависит от тарифа: Free — 1, Pro — 3, Max — 6 устройств. '
           'Российские сайты всегда напрямую.',
           style: PyDS.font(
-            size: 13,
+            size: 12.5,
             weight: FontWeight.w500,
-            height: 1.45,
+            height: 1.4,
             color: PyDS.textSoft,
           ),
         ),
@@ -248,7 +248,7 @@ class _ToggleSegment extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(
-        height: 36,
+        height: 34,
         decoration: BoxDecoration(
           gradient: active ? PyDS.gradGold : null,
           borderRadius: BorderRadius.circular(PyDS.rPill),
@@ -259,7 +259,7 @@ class _ToggleSegment extends StatelessWidget {
             Text(
               label,
               style: PyDS.font(
-                size: 12.5,
+                size: 12,
                 weight: FontWeight.w700,
                 color: active ? const Color(0xFF1A140A) : PyDS.textSoft,
               ),
@@ -429,7 +429,7 @@ class _TierCard extends StatelessWidget {
     final savings = annual ? meta.savingsAnnual : null;
 
     return PyCard(
-      padding: const EdgeInsets.all(PyDS.sp4),
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
       radius: PyDS.rMd,
       border: Border.all(
         color: isCurrent
@@ -453,7 +453,7 @@ class _TierCard extends StatelessWidget {
                 child: Text(
                   meta.name,
                   style: PyDS.font(
-                    size: 16,
+                    size: 15.5,
                     weight: FontWeight.w800,
                     color: meta.featured ? PyDS.goldLight : PyDS.text,
                   ),
@@ -483,7 +483,7 @@ class _TierCard extends StatelessWidget {
           Text(
             meta.tagline,
             style: PyDS.font(
-              size: 12,
+              size: 11.5,
               weight: FontWeight.w500,
               color: PyDS.textSoft,
             ),
@@ -496,7 +496,7 @@ class _TierCard extends StatelessWidget {
               PyTextGold(
                 text: price,
                 style: PyDS.font(
-                  size: 28,
+                  size: 26,
                   weight: FontWeight.w800,
                   letterSpacing: -0.8,
                   height: 1.0,
@@ -509,7 +509,7 @@ class _TierCard extends StatelessWidget {
                     perMonth,
                     overflow: TextOverflow.ellipsis,
                     style: PyDS.font(
-                      size: 12,
+                      size: 11.5,
                       weight: FontWeight.w500,
                       color: PyDS.textFaint,
                       mono: true,
@@ -524,17 +524,17 @@ class _TierCard extends StatelessWidget {
             Text(
               savings,
               style: PyDS.font(
-                size: 11,
+                size: 10.5,
                 weight: FontWeight.w700,
                 letterSpacing: 0.3,
                 color: PyDS.goldLight,
               ),
             ),
           ],
-          const SizedBox(height: PyDS.sp3),
+          const SizedBox(height: 10),
           for (final f in meta.features) ...[
             _FeatureRow(text: f, goldCheck: meta.featured),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
           ],
           if (meta.durations != null) ...[
             const SizedBox(height: PyDS.sp3 - 2),
@@ -542,8 +542,8 @@ class _TierCard extends StatelessWidget {
               label: isCurrent ? 'Продлить' : 'Оформить',
               icon: const Icon(Icons.arrow_forward_rounded,
                   size: 16, color: Color(0xFF1A140A)),
-              height: 44,
-              fontSize: 13.5,
+              height: 42,
+              fontSize: 13,
               onPressed: () => _openPicker(context, meta),
             ),
           ] else ...[
@@ -551,7 +551,7 @@ class _TierCard extends StatelessWidget {
             Text(
               isCurrent
                   ? 'Активный план — без оплаты'
-                  : 'Активируется автоматически после окончания подписки',
+                  : 'Включится после окончания доступа',
               style: PyDS.font(
                 size: 11.5,
                 weight: FontWeight.w500,
@@ -588,7 +588,7 @@ class _FeatureRow extends StatelessWidget {
           padding: const EdgeInsets.only(top: 2),
           child: Icon(
             Icons.check,
-            size: 13,
+            size: 12,
             color: goldCheck ? PyDS.goldLight : PyDS.textMute,
           ),
         ),
@@ -597,7 +597,7 @@ class _FeatureRow extends StatelessWidget {
           child: Text(
             text,
             style: PyDS.font(
-              size: 12.5,
+              size: 12,
               weight: FontWeight.w500,
               height: 1.4,
               color: PyDS.textSoft,
