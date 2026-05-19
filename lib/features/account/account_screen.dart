@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/api_client.dart';
+import '../../core/distribution.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets/py_app_icon.dart';
 import '../../shared/widgets/py_button.dart';
@@ -245,6 +246,11 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                         info: _planInfo,
                         onRenew: () => context.push('/checkout'),
                         onChange: () => context.push('/checkout'),
+                        renewLabel:
+                            isGooglePlayBuild ? 'Тарифы' : 'Продлить',
+                        changeLabel: isGooglePlayBuild
+                            ? 'Что входит'
+                            : 'Сменить план',
                       ),
                     ),
                     const _SectionTitle('Использование'),
@@ -534,11 +540,15 @@ class _PlanCard extends StatelessWidget {
     required this.info,
     required this.onRenew,
     required this.onChange,
+    required this.renewLabel,
+    required this.changeLabel,
   });
 
   final ({String title, String hint, double pct}) info;
   final VoidCallback onRenew;
   final VoidCallback onChange;
+  final String renewLabel;
+  final String changeLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -622,7 +632,7 @@ class _PlanCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: PyButtonGold(
-                      label: 'Продлить',
+                      label: renewLabel,
                       onPressed: onRenew,
                       height: 44,
                       fontSize: 13.5,
@@ -631,7 +641,7 @@ class _PlanCard extends StatelessWidget {
                   const SizedBox(width: PyDS.sp2),
                   Expanded(
                     child: PyButtonGhost(
-                      label: 'Сменить план',
+                      label: changeLabel,
                       onPressed: onChange,
                       height: 44,
                       fontSize: 13.5,

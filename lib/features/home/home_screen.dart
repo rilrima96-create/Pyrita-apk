@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api_client.dart';
+import '../../core/distribution.dart';
 import '../../core/theme.dart';
 import '../../core/vpn_controller.dart';
 import '../../shared/widgets/py_app_icon.dart';
@@ -71,7 +72,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final subStatus = _me?['subscription_status'];
     if (subStatus is Map && subStatus['kind'] == 'expired') {
       if (!mounted) return;
-      _showSnack('Подписка истекла. Продлите её, чтобы подключиться.');
+      _showSnack(isGooglePlayBuild
+          ? 'Доступ истёк. Проверьте доступные тарифы.'
+          : 'Подписка истекла. Продлите её, чтобы подключиться.');
       context.push('/checkout');
       return;
     }
@@ -395,6 +398,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                   child: _ExpiringBanner(
                     onTap: () => context.push('/checkout'),
+                    playStoreMode: isGooglePlayBuild,
                   ),
                 ),
               Padding(
@@ -1038,9 +1042,13 @@ class _ConnectingDebugButton extends StatelessWidget {
 }
 
 class _ExpiringBanner extends StatelessWidget {
-  const _ExpiringBanner({required this.onTap});
+  const _ExpiringBanner({
+    required this.onTap,
+    required this.playStoreMode,
+  });
 
   final VoidCallback onTap;
+  final bool playStoreMode;
 
   @override
   Widget build(BuildContext context) {
@@ -1064,7 +1072,9 @@ class _ExpiringBanner extends StatelessWidget {
             const SizedBox(width: PyDS.sp2 + 2),
             Expanded(
               child: Text(
-                'Подписка скоро истечёт. Продлите чтобы не остаться без сети.',
+                playStoreMode
+                    ? 'Доступ скоро истечёт. Проверьте тариф и возможности аккаунта.'
+                    : 'Подписка скоро истечёт. Продлите чтобы не остаться без сети.',
                 style: PyDS.font(
                   size: 12.5,
                   weight: FontWeight.w600,

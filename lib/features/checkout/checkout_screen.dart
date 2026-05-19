@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api_client.dart';
+import '../../core/distribution.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets/py_button.dart';
 import '../../shared/widgets/py_card.dart';
@@ -71,6 +72,10 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (isGooglePlayBuild) {
+      return const _PlayStoreSubscriptionScreen();
+    }
+
     return Scaffold(
       backgroundColor: PyDS.bg,
       body: DecoratedBox(
@@ -153,6 +158,142 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         ),
       ),
       bottomNavigationBar: const PyTabBar(active: PyTab.billing),
+    );
+  }
+}
+
+class _PlayStoreSubscriptionScreen extends StatelessWidget {
+  const _PlayStoreSubscriptionScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: PyDS.bg,
+      body: DecoratedBox(
+        decoration: const BoxDecoration(gradient: PyDS.gradBg),
+        child: SafeArea(
+          child: Column(
+            children: [
+              const PyTopBar(title: 'Подписка'),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(
+                    PyDS.sp4 + 2,
+                    PyDS.sp3,
+                    PyDS.sp4 + 2,
+                    PyDS.sp4,
+                  ),
+                  children: const [
+                    Text(
+                      'Тарифы Pyrita',
+                      style: TextStyle(
+                        fontSize: 25,
+                        fontWeight: FontWeight.w800,
+                        height: 1.12,
+                        letterSpacing: -0.5,
+                        color: PyDS.text,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      'В этой версии приложение не принимает платежи. Здесь можно подключаться, смотреть текущий доступ и сравнить возможности тарифов.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.45,
+                        fontWeight: FontWeight.w500,
+                        color: PyDS.textSoft,
+                      ),
+                    ),
+                    SizedBox(height: PyDS.sp4),
+                    _PlayTierCard(tier: _PricingTier.free),
+                    SizedBox(height: 10),
+                    _PlayTierCard(tier: _PricingTier.pro),
+                    SizedBox(height: 10),
+                    _PlayTierCard(tier: _PricingTier.max),
+                    SizedBox(height: PyDS.sp3),
+                    Text(
+                      'Если на аккаунте уже активен Pro или Max, приложение покажет этот доступ автоматически после входа.',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        height: 1.45,
+                        color: PyDS.textFaint,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: const PyTabBar(active: PyTab.billing),
+    );
+  }
+}
+
+class _PlayTierCard extends StatelessWidget {
+  const _PlayTierCard({required this.tier});
+
+  final _PricingTier tier;
+
+  @override
+  Widget build(BuildContext context) {
+    final meta = _TierMeta.of(tier);
+    final limit = switch (tier) {
+      _PricingTier.free => '0 ₽',
+      _PricingTier.pro => '199 ₽/мес',
+      _PricingTier.max => '399 ₽/мес',
+    };
+
+    return PyCard(
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
+      radius: PyDS.rMd,
+      border: Border.all(
+        color: meta.featured ? PyDS.strokeStrong : PyDS.stroke,
+        width: meta.featured ? 1.5 : 1,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  meta.name,
+                  style: PyDS.font(
+                    size: 15.5,
+                    weight: FontWeight.w800,
+                    color: meta.featured ? PyDS.goldLight : PyDS.text,
+                  ),
+                ),
+              ),
+              Text(
+                limit,
+                style: PyDS.font(
+                  size: 12,
+                  weight: FontWeight.w800,
+                  color: PyDS.goldLight,
+                  mono: true,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            meta.tagline,
+            style: PyDS.font(
+              size: 11.5,
+              weight: FontWeight.w500,
+              color: PyDS.textSoft,
+            ),
+          ),
+          const SizedBox(height: 10),
+          for (final f in meta.features) ...[
+            _FeatureRow(text: f, goldCheck: meta.featured),
+            const SizedBox(height: 4),
+          ],
+        ],
+      ),
     );
   }
 }

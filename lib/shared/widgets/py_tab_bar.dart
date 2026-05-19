@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/distribution.dart';
 import '../../core/theme.dart';
 
 enum PyTab { home, account, billing, settings }
@@ -50,14 +51,15 @@ class PyTabBar extends StatelessWidget {
                   label: 'Кабинет',
                   onTap: () => context.go('/account'),
                 ),
-                _TabItem(
-                  tab: PyTab.billing,
-                  active: active == PyTab.billing,
-                  icon: Icons.credit_card_outlined,
-                  iconActive: Icons.credit_card,
-                  label: 'Оплата',
-                  onTap: () => context.go('/checkout'),
-                ),
+                if (!isGooglePlayBuild)
+                  _TabItem(
+                    tab: PyTab.billing,
+                    active: active == PyTab.billing,
+                    icon: Icons.credit_card_outlined,
+                    iconActive: Icons.credit_card,
+                    label: 'Оплата',
+                    onTap: () => context.go('/checkout'),
+                  ),
                 _TabItem(
                   tab: PyTab.settings,
                   active: active == PyTab.settings,

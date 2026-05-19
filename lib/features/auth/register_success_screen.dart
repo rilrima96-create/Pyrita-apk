@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/distribution.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets/py_app_icon.dart';
 import '../../shared/widgets/py_button.dart';
@@ -119,7 +120,9 @@ class RegisterSuccessScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: PyDS.sp2 + 2),
                       PyButtonGhost(
-                        label: 'Посмотреть тарифы',
+                        label: isGooglePlayBuild
+                            ? 'Посмотреть возможности'
+                            : 'Посмотреть тарифы',
                         onPressed: () => context.go('/checkout'),
                       ),
                     ],
