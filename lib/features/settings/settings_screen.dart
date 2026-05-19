@@ -1020,29 +1020,6 @@ class _ProtocolBadge extends StatelessWidget {
   }
 }
 
-class _ProtocolRowSkeleton extends StatelessWidget {
-  const _ProtocolRowSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    return PyCard(
-      padding: const EdgeInsets.symmetric(
-        horizontal: PyDS.sp3 + 2,
-        vertical: PyDS.sp3 - 1,
-      ),
-      radius: PyDS.rMd,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(width: 120, height: 13, color: PyDS.bg2),
-          const SizedBox(height: 6),
-          Container(width: 220, height: 10, color: PyDS.bg2),
-        ],
-      ),
-    );
-  }
-}
-
 // ──────────────────────────────────────────────────────────────────────
 // Email confirm, subscription URL+regenerate, newsletter toggle, delete
 // account, about footer — перенесены из Account 1:1.
