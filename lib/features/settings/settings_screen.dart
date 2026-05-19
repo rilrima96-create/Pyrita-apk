@@ -93,16 +93,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                       const SizedBox(height: PyDS.sp4 + 2),
                     ],
-                    const _SectionTitle('Протоколы'),
+                    const _SectionTitle('Подключение'),
                     Padding(
                       padding:
                           const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
-                      child: _ProtocolList(
+                      child: _ConnectionModeCard(
+                        me: _me,
                         protocols: _protocols,
                         onReload: _loadProtocols,
                       ),
                     ),
-                    _ProtocolHelpText(protocols: _protocols),
                     const _SectionTitle('Ссылка подписки'),
                     Padding(
                       padding:
@@ -661,80 +661,106 @@ class _HelpCard extends StatelessWidget {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Протоколы — перенесено из Account. Switch logic в _ProtocolRow.
+// Подключение — показываем только честные режимы, без будущих протоколов.
 // ──────────────────────────────────────────────────────────────────────
 
-class _ProtocolList extends StatelessWidget {
-  const _ProtocolList({required this.protocols, required this.onReload});
+class _ConnectionModeCard extends ConsumerWidget {
+  const _ConnectionModeCard({
+    required this.me,
+    required this.protocols,
+    required this.onReload,
+  });
 
+  final Map<String, dynamic>? me;
   final List<ProtocolInfo>? protocols;
   final VoidCallback onReload;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final list = protocols;
     if (list == null) {
-      return const Column(
-        children: [
-          _ProtocolRowSkeleton(),
-          SizedBox(height: PyDS.sp2),
-          _ProtocolRowSkeleton(),
-        ],
-      );
+      return const _ConnectionModeSkeleton();
     }
-    if (list.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: PyDS.sp3),
-        child: Text(
-          'Не удалось загрузить список протоколов.',
-          style: PyDS.font(
-            size: 12,
-            weight: FontWeight.w500,
-            color: PyDS.textFaint,
-          ),
-        ),
-      );
-    }
-    return Column(
-      children: [
-        for (int i = 0; i < list.length; i++) ...[
-          if (i > 0) const SizedBox(height: PyDS.sp2),
-          _ProtocolRow(info: list[i], catalog: list, onSwitched: onReload),
-        ],
-      ],
-    );
-  }
-}
 
-const _switchableProtocolIds = {'reality', 'xhttp'};
-
-class _ProtocolHelpText extends ConsumerWidget {
-  const _ProtocolHelpText({required this.protocols});
-
-  final List<ProtocolInfo>? protocols;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
     final preferred =
         ref.watch(vpnControllerProvider.select((s) => s.preferredProtocolId));
-    final activeName = _activeProtocolName(protocols, preferred);
+    final activeName = _activeProtocolName(list, preferred);
+    final isMax = _effectiveTier(me) == 'max';
+    final manualProtocols = list
+        .where((p) => _switchableProtocolIds.contains(p.id) && p.available)
+        .toList(growable: false);
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        PyDS.sp4 + 6,
-        PyDS.sp2,
-        PyDS.sp4 + 6,
-        0,
-      ),
-      child: Text(
-        'Активен $activeName. Тапните на доступный протокол, чтобы переключиться.',
-        style: const TextStyle(
-          fontSize: 11.5,
-          color: PyDS.textFaint,
-          height: 1.4,
-        ),
+    return PyCard(
+      padding: const EdgeInsets.all(PyDS.sp4),
+      radius: PyDS.rLg,
+      border: Border.all(color: PyDS.stroke),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.route_outlined, size: 18, color: PyDS.goldLight),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isMax ? 'Ручной режим' : 'Автоматический режим',
+                  style: PyDS.font(
+                    size: 15,
+                    weight: FontWeight.w800,
+                    color: PyDS.text,
+                  ),
+                ),
+              ),
+              _ProtocolBadge(
+                label: activeName,
+                bg: PyDS.gold.withValues(alpha: 0.16),
+                fg: PyDS.goldLight,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            isMax
+                ? 'Можно выбрать рабочий протокол вручную. Остальные режимы скрыты, пока не пройдут проверку в приложении.'
+                : 'Pyrita сама выбирает стабильное подключение. Ручной выбор протокола доступен в Max.',
+            style: PyDS.font(
+              size: 12,
+              weight: FontWeight.w500,
+              height: 1.4,
+              color: PyDS.textSoft,
+            ),
+          ),
+          if (isMax) ...[
+            const SizedBox(height: PyDS.sp3),
+            if (manualProtocols.length <= 1)
+              Text(
+                'Сейчас доступен один рабочий режим. XHTTP появится здесь после полной проверки.',
+                style: PyDS.font(
+                  size: 11.5,
+                  weight: FontWeight.w500,
+                  height: 1.35,
+                  color: PyDS.textFaint,
+                ),
+              )
+            else
+              for (int i = 0; i < manualProtocols.length; i++) ...[
+                if (i > 0) const SizedBox(height: PyDS.sp2),
+                _ProtocolRow(
+                  info: manualProtocols[i],
+                  catalog: list,
+                  onSwitched: onReload,
+                ),
+              ],
+          ],
+        ],
       ),
     );
+  }
+
+  static String _effectiveTier(Map<String, dynamic>? me) {
+    final tier = me?['effective_tier'] as String?;
+    if (tier != null && tier.isNotEmpty) return tier;
+    return (me?['tier'] as String?) ?? 'free';
   }
 
   static String _fallbackProtocolName(String id) => switch (id) {
@@ -743,13 +769,36 @@ class _ProtocolHelpText extends ConsumerWidget {
         _ => id,
       };
 
-  static String _activeProtocolName(List<ProtocolInfo>? protocols, String id) {
-    if (protocols != null) {
-      for (final protocol in protocols) {
-        if (protocol.id == id) return protocol.name;
-      }
+  static String _activeProtocolName(List<ProtocolInfo> protocols, String id) {
+    for (final protocol in protocols) {
+      if (protocol.id == id) return protocol.name;
     }
     return _fallbackProtocolName(id);
+  }
+}
+
+const _switchableProtocolIds = {'reality', 'xhttp'};
+
+class _ConnectionModeSkeleton extends StatelessWidget {
+  const _ConnectionModeSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return PyCard(
+      padding: const EdgeInsets.all(PyDS.sp4),
+      radius: PyDS.rLg,
+      border: Border.all(color: PyDS.stroke),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(width: 150, height: 15, color: PyDS.bg2),
+          const SizedBox(height: 8),
+          Container(width: double.infinity, height: 11, color: PyDS.bg2),
+          const SizedBox(height: 5),
+          Container(width: 230, height: 11, color: PyDS.bg2),
+        ],
+      ),
+    );
   }
 }
 
@@ -908,18 +957,6 @@ class _ProtocolRowState extends ConsumerState<_ProtocolRow> {
                           label: 'АКТИВЕН',
                           bg: PyDS.gold.withValues(alpha: 0.18),
                           fg: PyDS.goldLight,
-                        )
-                      else if (!isAvailable)
-                        _ProtocolBadge(
-                          label: 'НЕ НАСТРОЕН',
-                          bg: PyDS.bg2,
-                          fg: PyDS.textFaint,
-                        )
-                      else if (!_switchableProtocolIds.contains(info.id))
-                        _ProtocolBadge(
-                          label: 'В РАЗРАБОТКЕ',
-                          bg: PyDS.bg2,
-                          fg: PyDS.textFaint,
                         )
                       else
                         _ProtocolBadge(
