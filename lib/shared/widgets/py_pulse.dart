@@ -75,20 +75,21 @@ class _PyPulseState extends State<PyPulse> with TickerProviderStateMixin {
     return SizedBox(
       width: widget.size,
       height: widget.size,
-      child: AnimatedBuilder(
-        animation:
-            Listenable.merge([_ringCtrl, _sweepCtrl, _breathCtrl]),
-        builder: (context, _) {
-          return CustomPaint(
-            size: Size.square(widget.size),
-            painter: _PulsePainter(
-              state: widget.state,
-              ringT: _ringCtrl.value,
-              sweepT: _sweepCtrl.value,
-              breathT: _breathCtrl.value,
-            ),
-          );
-        },
+      child: ClipRect(
+        child: AnimatedBuilder(
+          animation: Listenable.merge([_ringCtrl, _sweepCtrl, _breathCtrl]),
+          builder: (context, _) {
+            return CustomPaint(
+              size: Size.square(widget.size),
+              painter: _PulsePainter(
+                state: widget.state,
+                ringT: _ringCtrl.value,
+                sweepT: _sweepCtrl.value,
+                breathT: _breathCtrl.value,
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -163,9 +164,7 @@ class _PulsePainter extends CustomPainter {
       // ring i фаза t = (ringT + i*0.25) mod 1
       final t = on ? ((ringT + i * 0.25) % 1.0) : 0.0;
       final r = (20 + t * (4.6 - 1.0) * 20) * scale; // от ~20 до ~92
-      final fadeOut = on
-          ? (t < 0.8 ? 0.95 * (1 - t / 0.8) : 0.0)
-          : 0.18;
+      final fadeOut = on ? (t < 0.8 ? 0.95 * (1 - t / 0.8) : 0.0) : 0.18;
       final ringPaint = Paint()
         ..shader = const LinearGradient(
           begin: Alignment.topLeft,
@@ -178,7 +177,8 @@ class _PulsePainter extends CustomPainter {
       // shader не учитывает alpha сам по себе — мажорим opacity через layer
       canvas.saveLayer(
         Rect.fromCircle(center: c, radius: r + 4),
-        Paint()..color = Colors.white.withValues(alpha: fadeOut.clamp(0.0, 1.0)),
+        Paint()
+          ..color = Colors.white.withValues(alpha: fadeOut.clamp(0.0, 1.0)),
       );
       canvas.drawCircle(c, r, ringPaint);
       canvas.restore();
@@ -216,9 +216,7 @@ class _PulsePainter extends CustomPainter {
         c.dy + math.sin(theta) * n.dist * scale,
       );
       // breath cycle на каждой ноде со своей фазой
-      final localT = on
-          ? ((breathT + n.phase / 2.4) % 1.0)
-          : 0.5;
+      final localT = on ? ((breathT + n.phase / 2.4) % 1.0) : 0.5;
       final nodeScale =
           on ? (1.0 + math.sin(localT * 2 * math.pi) * 0.18) : 1.0;
       final nodeAlpha = on ? 1.0 : 0.4;
@@ -233,8 +231,7 @@ class _PulsePainter extends CustomPainter {
     }
 
     // 6. central pyrite glow + hex glyph
-    final breathScale =
-        on ? (1.0 + math.sin(breathT * math.pi) * 0.04) : 1.0;
+    final breathScale = on ? (1.0 + math.sin(breathT * math.pi) * 0.04) : 1.0;
     canvas.save();
     canvas.translate(c.dx, c.dy);
     canvas.scale(breathScale);
@@ -254,7 +251,8 @@ class _PulsePainter extends CustomPainter {
     canvas.drawCircle(
       Offset.zero,
       22 * scale,
-      corePaint..color = Colors.white.withValues(alpha: (0.5 + intensity * 0.5)),
+      corePaint
+        ..color = Colors.white.withValues(alpha: (0.5 + intensity * 0.5)),
     );
 
     // hex pyrite glyph (scale 0.45)

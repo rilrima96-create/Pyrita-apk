@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +14,9 @@ import '../../shared/widgets/py_flag.dart';
 import '../../shared/widgets/py_pulse.dart';
 import '../../shared/widgets/py_tab_bar.dart';
 import '../onboarding/vpn_permission_intro.dart';
+
+const _vpnDiagnosticsEnabled =
+    kDebugMode || bool.fromEnvironment('PYRITA_VPN_DIAGNOSTICS');
 
 /// Главный экран — sonar hero + Connect/Disconnect.
 ///
@@ -135,110 +139,110 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: SizedBox(
           height: MediaQuery.of(ctx).size.height * 0.85,
           child: Padding(
-          padding: const EdgeInsets.all(PyDS.sp4),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Диагностика VPN',
-                style: PyDS.font(
-                  size: 17,
-                  weight: FontWeight.w800,
-                  color: PyDS.text,
-                ),
-              ),
-              const SizedBox(height: PyDS.sp2),
-              Text(
-                'State: ${status.state.name}'
-                '${status.errorMessage != null ? "\nError: ${status.errorMessage}" : ""}'
-                '\nConfig cached: ${config != null ? "yes (${config.length} chars)" : "no"}',
-                style: PyDS.font(
-                  size: 12,
-                  weight: FontWeight.w500,
-                  color: PyDS.textSoft,
-                  mono: true,
-                ),
-              ),
-              const SizedBox(height: PyDS.sp3),
-              Text(
-                'XRAY LOGS (последние 40):',
-                style: PyDS.font(
-                  size: 10.5,
-                  weight: FontWeight.w700,
-                  letterSpacing: 0.6,
-                  color: PyDS.textFaint,
-                ),
-              ),
-              const SizedBox(height: 6),
-              // Expanded — logs container занимает всё available space
-              // в Dialog'е (вместо maxHeight constraint). SingleChildScrollView
-              // делает текст scrollable внутри.
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(PyDS.sp2),
-                  decoration: BoxDecoration(
-                    color: PyDS.ink,
-                    borderRadius: BorderRadius.circular(PyDS.rSm),
-                    border: Border.all(color: PyDS.stroke),
+            padding: const EdgeInsets.all(PyDS.sp4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Диагностика VPN',
+                  style: PyDS.font(
+                    size: 17,
+                    weight: FontWeight.w800,
+                    color: PyDS.text,
                   ),
-                  child: SingleChildScrollView(
-                    child: SelectableText(
-                      logsText,
-                      style: PyDS.font(
-                        size: 10.5,
-                        weight: FontWeight.w500,
-                        height: 1.4,
-                        color: PyDS.textSoft,
-                        mono: true,
-                      ),
+                ),
+                const SizedBox(height: PyDS.sp2),
+                Text(
+                  'State: ${status.state.name}'
+                  '${status.errorMessage != null ? "\nError: ${status.errorMessage}" : ""}'
+                  '\nConfig cached: ${config != null ? "yes (${config.length} chars)" : "no"}',
+                  style: PyDS.font(
+                    size: 12,
+                    weight: FontWeight.w500,
+                    color: PyDS.textSoft,
+                    mono: true,
+                  ),
+                ),
+                const SizedBox(height: PyDS.sp3),
+                Text(
+                  'XRAY LOGS (последние 40):',
+                  style: PyDS.font(
+                    size: 10.5,
+                    weight: FontWeight.w700,
+                    letterSpacing: 0.6,
+                    color: PyDS.textFaint,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                // Expanded — logs container занимает всё available space
+                // в Dialog'е (вместо maxHeight constraint). SingleChildScrollView
+                // делает текст scrollable внутри.
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(PyDS.sp2),
+                    decoration: BoxDecoration(
+                      color: PyDS.ink,
+                      borderRadius: BorderRadius.circular(PyDS.rSm),
+                      border: Border.all(color: PyDS.stroke),
                     ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: PyDS.sp3),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  TextButton(
-                    onPressed: () async {
-                      await Clipboard.setData(ClipboardData(
-                        text: 'State: ${status.state.name}\n'
-                            'Error: ${status.errorMessage ?? ""}\n\n'
-                            'Logs:\n$logsText',
-                      ));
-                      if (!ctx.mounted) return;
-                      ScaffoldMessenger.of(ctx).showSnackBar(
-                        const SnackBar(
-                          content: Text('Скопировано в буфер'),
-                          duration: Duration(seconds: 1),
+                    child: SingleChildScrollView(
+                      child: SelectableText(
+                        logsText,
+                        style: PyDS.font(
+                          size: 10.5,
+                          weight: FontWeight.w500,
+                          height: 1.4,
+                          color: PyDS.textSoft,
+                          mono: true,
                         ),
-                      );
-                    },
-                    child: Text(
-                      'Скопировать',
-                      style: PyDS.font(
-                        size: 13,
-                        weight: FontWeight.w600,
-                        color: PyDS.goldLight,
                       ),
                     ),
                   ),
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(),
-                    child: Text(
-                      'Закрыть',
-                      style: PyDS.font(
-                        size: 13,
-                        weight: FontWeight.w600,
-                        color: PyDS.textMute,
+                ),
+                const SizedBox(height: PyDS.sp3),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    TextButton(
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(
+                          text: 'State: ${status.state.name}\n'
+                              'Error: ${status.errorMessage ?? ""}\n\n'
+                              'Logs:\n$logsText',
+                        ));
+                        if (!ctx.mounted) return;
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          const SnackBar(
+                            content: Text('Скопировано в буфер'),
+                            duration: Duration(seconds: 1),
+                          ),
+                        );
+                      },
+                      child: Text(
+                        'Скопировать',
+                        style: PyDS.font(
+                          size: 13,
+                          weight: FontWeight.w600,
+                          color: PyDS.goldLight,
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      child: Text(
+                        'Закрыть',
+                        style: PyDS.font(
+                          size: 13,
+                          weight: FontWeight.w600,
+                          color: PyDS.textMute,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -340,7 +344,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     // Snackbar малоинформативен (пропадает за 4 сек), banner может clip
     // длинный stack trace — диалог гарантированно показывает всё.
     ref.listen<PyritaVpnStatus>(vpnControllerProvider, (prev, next) {
-      if (next.isError && prev?.isError != true) {
+      if (_vpnDiagnosticsEnabled && next.isError && prev?.isError != true) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _showLogsDialog();
         });
@@ -358,16 +362,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             children: [
               _HomeTopBar(onAccount: () => context.go('/account')),
               Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _PulseTapTarget(
-                      onTap: _toggle,
-                      child: PyPulse(size: 232, state: connState),
-                    ),
-                    const SizedBox(height: PyDS.sp3),
-                    _StatusBlock(state: connState),
-                  ],
+                child: _HomeHero(
+                  state: connState,
+                  onTap: _toggle,
                 ),
               ),
               // Persistent error/info banner — показывается пока
@@ -384,11 +381,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                   child: _ErrorBanner(
                     message: vpnStatus.errorMessage!,
-                    onShowLogs: () => _showLogsDialog(),
+                    onShowLogs:
+                        _vpnDiagnosticsEnabled ? () => _showLogsDialog() : null,
                   ),
                 ),
               // Debug-кнопка «Показать логи» когда долгое connecting (>10 sec).
-              if (vpnStatus.isConnecting)
+              if (_vpnDiagnosticsEnabled && vpnStatus.isConnecting)
                 _ConnectingDebugButton(onShowLogs: () => _showLogsDialog()),
               if (_expiringSoon)
                 Padding(
@@ -434,6 +432,47 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         PyritaVpnState.connecting => ConnState.connecting,
         _ => ConnState.idle, // disconnected, error
       };
+}
+
+class _HomeHero extends StatelessWidget {
+  const _HomeHero({required this.state, required this.onTap});
+
+  final ConnState state;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final h = constraints.maxHeight;
+        final pulseSize = h < 280
+            ? 168.0
+            : h < 340
+                ? 192.0
+                : h < 400
+                    ? 212.0
+                    : 232.0;
+        final gap = h < 320 ? PyDS.sp2 : PyDS.sp3;
+
+        return Center(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _PulseTapTarget(
+                  onTap: onTap,
+                  child: PyPulse(size: pulseSize, state: state),
+                ),
+                SizedBox(height: gap),
+                _StatusBlock(state: state),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
 
 class _HomeTopBar extends StatelessWidget {
@@ -895,7 +934,7 @@ class _ErrorBanner extends StatelessWidget {
   const _ErrorBanner({required this.message, required this.onShowLogs});
 
   final String message;
-  final VoidCallback onShowLogs;
+  final VoidCallback? onShowLogs;
 
   @override
   Widget build(BuildContext context) {
@@ -915,8 +954,7 @@ class _ErrorBanner extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.error_outline,
-                  size: 18, color: PyDS.danger),
+              const Icon(Icons.error_outline, size: 18, color: PyDS.danger),
               const SizedBox(width: PyDS.sp2),
               Expanded(
                 child: Text(
@@ -928,28 +966,29 @@ class _ErrorBanner extends StatelessWidget {
                   ),
                 ),
               ),
-              GestureDetector(
-                onTap: onShowLogs,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: PyDS.bg,
-                    borderRadius: BorderRadius.circular(PyDS.rPill),
-                    border: Border.all(
-                        color: PyDS.danger.withValues(alpha: 0.4)),
-                  ),
-                  child: Text(
-                    'ЛОГИ',
-                    style: PyDS.font(
-                      size: 10,
-                      weight: FontWeight.w700,
-                      letterSpacing: 0.6,
-                      color: PyDS.danger,
+              if (onShowLogs != null)
+                GestureDetector(
+                  onTap: onShowLogs,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: PyDS.bg,
+                      borderRadius: BorderRadius.circular(PyDS.rPill),
+                      border:
+                          Border.all(color: PyDS.danger.withValues(alpha: 0.4)),
+                    ),
+                    child: Text(
+                      'ЛОГИ',
+                      style: PyDS.font(
+                        size: 10,
+                        weight: FontWeight.w700,
+                        letterSpacing: 0.6,
+                        color: PyDS.danger,
+                      ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
           const SizedBox(height: 6),
