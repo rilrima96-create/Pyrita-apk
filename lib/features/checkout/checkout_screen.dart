@@ -687,7 +687,9 @@ class _PaymentPickerSheetState extends State<_PaymentPickerSheet> {
         PyDS.sp4,
         PyDS.sp4,
         PyDS.sp4,
-        MediaQuery.of(context).viewInsets.bottom + PyDS.sp4,
+        MediaQuery.of(context).viewInsets.bottom +
+            MediaQuery.of(context).padding.bottom +
+            PyDS.sp4,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -730,25 +732,25 @@ class _PaymentPickerSheetState extends State<_PaymentPickerSheet> {
               selected: _selected.planId == dur.planId,
               onTap: () => setState(() => _selected = dur),
             ),
-            const SizedBox(height: PyDS.sp2),
+            const SizedBox(height: 6),
           ],
-          const SizedBox(height: PyDS.sp3),
+          const SizedBox(height: 10),
           // Pay-кнопки
           PyButtonGold(
             label: isLavaLoading ? 'Создаём…' : 'Оплатить картой / СБП',
             icon: const Icon(Icons.credit_card,
                 size: 16, color: Color(0xFF1A140A)),
-            height: 48,
-            fontSize: 14,
+            height: 46,
+            fontSize: 13.5,
             onPressed: isAnyLoading ? null : () => _pay('lava'),
           ),
-          const SizedBox(height: PyDS.sp2),
+          const SizedBox(height: 6),
           PyButtonGhost(
             label: isCcLoading ? 'Создаём…' : 'Оплатить криптой',
             icon: const Icon(Icons.currency_bitcoin,
                 size: 16, color: PyDS.goldLight),
-            height: 48,
-            fontSize: 14,
+            height: 46,
+            fontSize: 13.5,
             onPressed: isAnyLoading ? null : () => _pay('cryptocloud'),
           ),
           if (_error != null) ...[
@@ -795,7 +797,7 @@ class _DurationRow extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(
           horizontal: PyDS.sp3 + 2,
-          vertical: PyDS.sp3,
+          vertical: 10,
         ),
         decoration: BoxDecoration(
           color: selected ? PyDS.gold.withValues(alpha: 0.10) : PyDS.bg2,
