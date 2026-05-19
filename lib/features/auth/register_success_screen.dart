@@ -86,7 +86,7 @@ class RegisterSuccessScreen extends StatelessWidget {
                                   const _SuccessRow(
                                     icon: Icons.group_outlined,
                                     text:
-                                        'Код друга сохранен. Бонусные дни начислятся после первой успешной оплаты.',
+                                        'Если код друга действителен, бонусные дни начислятся после первой успешной оплаты.',
                                   ),
                                 ],
                                 if (planLabel != null) ...[
