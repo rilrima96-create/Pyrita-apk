@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api_client.dart';
@@ -1464,8 +1465,15 @@ class _DeleteAccountCardState extends State<_DeleteAccountCard> {
   }
 }
 
-class _AboutFooter extends StatelessWidget {
+class _AboutFooter extends StatefulWidget {
   const _AboutFooter();
+
+  @override
+  State<_AboutFooter> createState() => _AboutFooterState();
+}
+
+class _AboutFooterState extends State<_AboutFooter> {
+  late final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
 
   @override
   Widget build(BuildContext context) {
@@ -1474,14 +1482,20 @@ class _AboutFooter extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text(
-            'Pyrita Android · v0.1.13',
-            style: PyDS.font(
-              size: 10.5,
-              weight: FontWeight.w600,
-              letterSpacing: 0.3,
-              color: PyDS.textFaint,
-            ),
+          FutureBuilder<PackageInfo>(
+            future: _packageInfo,
+            builder: (context, snapshot) {
+              final version = snapshot.data?.version;
+              return Text(
+                version == null ? 'Pyrita Android' : 'Pyrita Android · v$version',
+                style: PyDS.font(
+                  size: 10.5,
+                  weight: FontWeight.w600,
+                  letterSpacing: 0.3,
+                  color: PyDS.textFaint,
+                ),
+              );
+            },
           ),
           const SizedBox(height: PyDS.sp2 + 2),
           TextButton(
