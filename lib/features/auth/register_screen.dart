@@ -158,9 +158,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         color: PyDS.textSoft,
                       ),
                       children: [
-                        const TextSpan(text: '7 дней '),
+                        const TextSpan(text: 'Включим '),
                         TextSpan(
-                          text: 'бесплатно',
+                          text: 'Pro на 7 дней',
                           style: PyDS.font(
                             size: 13.5,
                             weight: FontWeight.w700,
@@ -398,7 +398,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         PyButtonGold(
                           label: _loading
                               ? 'Создаём…'
-                              : 'Создать аккаунт · 7 дней Pro',
+                              : 'Создать и включить Pro',
                           busy: _loading,
                           onPressed: _submit,
                           fontSize: 15,

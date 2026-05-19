@@ -46,7 +46,7 @@ class RegisterSuccessScreen extends StatelessWidget {
                           Center(child: PyAppIcon(size: 82, animated: true)),
                           const SizedBox(height: PyDS.sp5),
                           Text(
-                            'Аккаунт создан',
+                            'Pro включён',
                             textAlign: TextAlign.center,
                             style: PyDS.font(
                               size: 28,
@@ -57,7 +57,7 @@ class RegisterSuccessScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            '7 дней Pyrita Pro уже активированы. Карта не нужна.',
+                            'Аккаунт создан. Доступ уровня Pro активен на 7 дней. Карта не нужна.',
                             textAlign: TextAlign.center,
                             style: PyDS.font(
                               size: 14,
@@ -73,7 +73,7 @@ class RegisterSuccessScreen extends StatelessWidget {
                               children: [
                                 const _SuccessRow(
                                   icon: Icons.check_circle_outline,
-                                  text: 'Доступ уровня Pro включен на 7 дней.',
+                                  text: 'Pro-доступ включён на 7 дней.',
                                 ),
                                 const SizedBox(height: PyDS.sp3),
                                 const _SuccessRow(
