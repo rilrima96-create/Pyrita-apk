@@ -87,12 +87,14 @@ android/
 | Method | Path | Описание |
 |---|---|---|
 | `POST` | `/api/login` | `{email, password}` → session-cookie + 200 |
-| `POST` | `/api/register` | `{email, password, accept}` → session-cookie + 200 |
+| `POST` | `/api/register` | `{email, password, accept, display_name?, ref?}` → session-cookie + 200 |
 | `GET` | `/api/me` | Текущий юзер + subscription_url + subscription_status |
 | `POST` | `/api/logout` | Завершить сессию |
 | `POST` | `/api/auth/request-password-reset` | `{email}` → 200 (privacy: всегда) |
 
-Sub URL juzер получает в `/api/me.subscription_url`, его передаём sing-box-core (когда дойдём до Phase C).
+Регистрация в приложении поддерживает optional display name, код друга/referral
+и отдельный экран успеха перед первым подключением. Sub URL юзер получает в
+`/api/me.subscription_url`.
 
 ## Лицензии деpsов
 

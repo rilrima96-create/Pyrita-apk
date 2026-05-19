@@ -9,7 +9,7 @@ import '../../shared/widgets/py_button.dart';
 ///
 /// Показывается ОДИН раз перед первым тапом «Подключить» (флаг
 /// `vpn_permission_requested` в SharedPreferences). Если пользователь
-/// тапает «Продолжить»:
+/// тапает «Разрешить VPN»:
 ///   1. Запрашиваем POST_NOTIFICATIONS (Android 13+) — silent, если
 ///      denied всё равно продолжаем (VPN работает, просто без видимого
 ///      статуса в шторке).
@@ -22,7 +22,7 @@ import '../../shared/widgets/py_button.dart';
 /// настраивать VPN?» выглядит угрожающим.
 ///
 /// Возвращает через Navigator.pop:
-///   * `true` — пользователь нажал «Понятно, продолжить»
+///   * `true` — пользователь нажал «Разрешить VPN»
 ///   * `false` или `null` — отмена / back swipe
 class VpnPermissionIntroScreen extends StatelessWidget {
   const VpnPermissionIntroScreen({super.key});
@@ -66,20 +66,20 @@ class VpnPermissionIntroScreen extends StatelessWidget {
                         Center(child: PyAppIcon(size: 92, animated: true)),
                         const SizedBox(height: PyDS.sp6),
                         Text(
-                          'Нужно одно разрешение',
+                          'Разрешение VPN',
                           style: PyDS.font(
                             size: 28,
                             weight: FontWeight.w800,
-                            letterSpacing: -0.7,
                             height: 1.1,
                             color: PyDS.text,
                           ),
                         ),
                         const SizedBox(height: PyDS.sp2 + 2),
                         Text(
-                          'Pyrita создаёт защищённое подключение прямо на '
-                          'устройстве. Android попросит подтверждение — '
-                          'это нормально, так работают все VPN-клиенты.',
+                          'Pyrita использует системное разрешение Android, '
+                          'чтобы создать VPN-подключение на вашем устройстве. '
+                          'После разрешения интернет-трафик может проходить '
+                          'через серверы Pyrita для работы защищенного туннеля.',
                           style: PyDS.font(
                             size: 14.5,
                             weight: FontWeight.w500,
@@ -89,22 +89,22 @@ class VpnPermissionIntroScreen extends StatelessWidget {
                         ),
                         const SizedBox(height: PyDS.sp6),
                         const _Section(
-                          title: 'Что увидите дальше',
+                          title: 'Для чего это нужно',
                           items: [
                             _Item(
-                              icon: Icons.notifications_outlined,
-                              text: 'Запрос разрешения на уведомления — '
-                                  'чтобы вы видели в шторке что VPN активен.',
-                            ),
-                            _Item(
-                              icon: Icons.shield_outlined,
-                              text: 'Системный диалог Android: '
-                                  '«Разрешить Pyrita настраивать VPN-соединение?»',
-                            ),
-                            _Item(
                               icon: Icons.vpn_lock_outlined,
-                              text: 'Маленький ключик в строке состояния — '
-                                  'значит туннель активен.',
+                              text: 'Создать VPN-туннель и направить '
+                                  'подключение через выбранный сервер Pyrita.',
+                            ),
+                            _Item(
+                              icon: Icons.speed_outlined,
+                              text: 'Проверять технический статус подключения, '
+                                  'лимит трафика и доступность вашего тарифа.',
+                            ),
+                            _Item(
+                              icon: Icons.notifications_outlined,
+                              text: 'Показать системное уведомление, чтобы вы '
+                                  'видели, когда VPN включен, и могли его остановить.',
                             ),
                           ],
                           accent: PyDS.goldLight,
@@ -114,16 +114,19 @@ class VpnPermissionIntroScreen extends StatelessWidget {
                           title: 'Что Pyrita НЕ делает',
                           items: [
                             _Item(
-                              icon: Icons.password_outlined,
-                              text: 'Не читает пароли и личные сообщения.',
+                              icon: Icons.campaign_outlined,
+                              text: 'Не использует VPN для рекламы, продажи '
+                                  'данных или рекламного трекинга.',
+                            ),
+                            _Item(
+                              icon: Icons.edit_off_outlined,
+                              text: 'Не меняет содержимое сайтов, сообщений '
+                                  'или файлов, которые проходят через туннель.',
                             ),
                             _Item(
                               icon: Icons.history_toggle_off,
-                              text: 'Не сохраняет историю того, что вы смотрите.',
-                            ),
-                            _Item(
-                              icon: Icons.no_accounts_outlined,
-                              text: 'Не передаёт данные третьим лицам.',
+                              text: 'Не сохраняет историю сайтов для '
+                                  'маркетинга или перепродажи данных.',
                             ),
                           ],
                           accent: PyDS.on,
@@ -141,7 +144,7 @@ class VpnPermissionIntroScreen extends StatelessWidget {
                   child: Column(
                     children: [
                       PyButtonGold(
-                        label: 'Понятно, продолжить',
+                        label: 'Разрешить VPN',
                         fontSize: 16,
                         onPressed: () => _onContinue(context),
                       ),

@@ -7,6 +7,7 @@ import 'features/account/account_screen.dart';
 import 'features/account/licenses_screen.dart';
 import 'features/auth/login_screen.dart';
 import 'features/auth/register_screen.dart';
+import 'features/auth/register_success_screen.dart';
 import 'features/checkout/checkout_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/settings/settings_screen.dart';
@@ -31,7 +32,7 @@ class PyritaApp extends ConsumerWidget {
 
 /// Router-config:
 ///   * `/` — splash, проверяет сохранённую сессию
-///   * `/login`, `/register` — auth flow
+///   * `/login`, `/register`, `/register-success` — auth flow
 ///   * `/home` — sonar hero, connect/disconnect
 ///   * `/account` — личный кабинет (план, устройства, реферал, протокол,
 ///     подтверждение email, newsletter, sub URL, удаление аккаунта)
@@ -51,7 +52,17 @@ final _routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/register',
-        builder: (context, state) => const RegisterScreen(),
+        builder: (context, state) => RegisterScreen(
+          refCode: state.uri.queryParameters['ref'],
+          planId: state.uri.queryParameters['plan'],
+        ),
+      ),
+      GoRoute(
+        path: '/register-success',
+        builder: (context, state) => RegisterSuccessScreen(
+          selectedPlan: state.uri.queryParameters['plan'],
+          referralApplied: state.uri.queryParameters['ref'] == '1',
+        ),
       ),
       GoRoute(
         path: '/home',

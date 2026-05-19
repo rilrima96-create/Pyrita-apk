@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api_client.dart';
 import '../../core/theme.dart';
@@ -9,7 +10,14 @@ import '../../shared/widgets/py_button.dart';
 import '../../shared/widgets/py_card.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
-  const RegisterScreen({super.key});
+  const RegisterScreen({
+    super.key,
+    this.refCode,
+    this.planId,
+  });
+
+  final String? refCode;
+  final String? planId;
 
   @override
   ConsumerState<RegisterScreen> createState() => _RegisterScreenState();
@@ -17,18 +25,41 @@ class RegisterScreen extends ConsumerStatefulWidget {
 
 class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _displayNameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
+  final _refCtrl = TextEditingController();
   bool _loading = false;
   bool _passwordVisible = false;
   bool _accept = false;
   String? _errorMsg;
 
   @override
+  void initState() {
+    super.initState();
+    final initialRef = widget.refCode?.trim();
+    if (initialRef != null && initialRef.isNotEmpty) {
+      _refCtrl.text = initialRef;
+    }
+  }
+
+  @override
   void dispose() {
+    _displayNameCtrl.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
+    _refCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _openLegal(String path) async {
+    final ok = await launchUrl(
+      Uri.parse('https://pyrita.com$path'),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!ok && mounted) {
+      setState(() => _errorMsg = 'Не удалось открыть ссылку');
+    }
   }
 
   Future<void> _submit() async {
@@ -45,9 +76,20 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       await ApiClient.instance.register(
         email: _emailCtrl.text.trim(),
         password: _passwordCtrl.text,
+        displayName: _displayNameCtrl.text,
+        refCode: _refCtrl.text,
       );
       if (!mounted) return;
-      context.go('/home');
+      final hasRef = _refCtrl.text.trim().isNotEmpty;
+      final params = <String, String>{
+        if (widget.planId != null && widget.planId!.trim().isNotEmpty)
+          'plan': widget.planId!.trim(),
+        if (hasRef) 'ref': '1',
+      };
+      final target = params.isEmpty
+          ? '/register-success'
+          : Uri(path: '/register-success', queryParameters: params).toString();
+      context.go(target);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -161,11 +203,32 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         ),
                         const SizedBox(height: PyDS.sp3),
                         TextFormField(
+                          controller: _displayNameCtrl,
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [AutofillHints.givenName],
+                          style: PyDS.font(
+                            size: 14.5,
+                            weight: FontWeight.w600,
+                            color: PyDS.text,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Как к вам обращаться',
+                            hintText: 'Например, Василий',
+                          ),
+                          validator: (v) {
+                            final value = v?.trim() ?? '';
+                            if (value.length > 64) {
+                              return 'Не больше 64 символов';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: PyDS.sp3),
+                        TextFormField(
                           controller: _passwordCtrl,
                           obscureText: !_passwordVisible,
                           autofillHints: const [AutofillHints.newPassword],
-                          textInputAction: TextInputAction.done,
-                          onFieldSubmitted: (_) => _submit(),
+                          textInputAction: TextInputAction.next,
                           style: PyDS.font(
                             size: 14.5,
                             weight: FontWeight.w600,
@@ -190,6 +253,40 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                           validator: (v) {
                             if (v == null || v.isEmpty) return 'Введите пароль';
                             if (v.length < 8) return 'Не менее 8 символов';
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: PyDS.sp3),
+                        TextFormField(
+                          controller: _refCtrl,
+                          textInputAction: TextInputAction.done,
+                          onFieldSubmitted: (_) => _submit(),
+                          style: PyDS.font(
+                            size: 14.5,
+                            weight: FontWeight.w600,
+                            color: PyDS.text,
+                          ),
+                          decoration: InputDecoration(
+                            labelText: 'Код друга',
+                            hintText: 'Если есть',
+                            suffixIcon: _refCtrl.text.trim().isEmpty
+                                ? null
+                                : IconButton(
+                                    icon: const Icon(
+                                      Icons.close,
+                                      color: PyDS.textFaint,
+                                      size: 18,
+                                    ),
+                                    onPressed: () =>
+                                        setState(() => _refCtrl.clear()),
+                                  ),
+                          ),
+                          onChanged: (_) => setState(() {}),
+                          validator: (v) {
+                            final value = v?.trim() ?? '';
+                            if (value.length > 64) {
+                              return 'Проверьте код';
+                            }
                             return null;
                           },
                         ),
@@ -227,15 +324,37 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                                 ),
                                 const SizedBox(width: 10),
                                 Expanded(
-                                  child: Text(
-                                    'Принимаю оферту и политику '
-                                    'конфиденциальности',
-                                    style: PyDS.font(
-                                      size: 12.5,
-                                      weight: FontWeight.w500,
-                                      height: 1.4,
-                                      color: PyDS.textSoft,
-                                    ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Принимаю условия Pyrita',
+                                        style: PyDS.font(
+                                          size: 12.5,
+                                          weight: FontWeight.w600,
+                                          height: 1.35,
+                                          color: PyDS.textSoft,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Wrap(
+                                        spacing: 10,
+                                        runSpacing: 2,
+                                        children: [
+                                          _LegalLink(
+                                            label: 'Оферта',
+                                            onTap: () =>
+                                                _openLegal('/legal/offer'),
+                                          ),
+                                          _LegalLink(
+                                            label: 'Конфиденциальность',
+                                            onTap: () =>
+                                                _openLegal('/legal/privacy'),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
@@ -277,7 +396,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         ],
                         const SizedBox(height: PyDS.sp4),
                         PyButtonGold(
-                          label: _loading ? 'Создаём…' : 'Создать аккаунт',
+                          label: _loading
+                              ? 'Создаём…'
+                              : 'Создать аккаунт · 7 дней Pro',
                           busy: _loading,
                           onPressed: _submit,
                           fontSize: 15,
@@ -317,6 +438,31 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LegalLink extends StatelessWidget {
+  const _LegalLink({
+    required this.label,
+    required this.onTap,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Text(
+        label,
+        style: PyDS.font(
+          size: 12.5,
+          weight: FontWeight.w700,
+          color: PyDS.goldLight,
         ),
       ),
     );

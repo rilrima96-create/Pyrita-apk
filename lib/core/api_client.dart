@@ -98,11 +98,21 @@ class ApiClient {
   Future<void> register({
     required String email,
     required String password,
+    String? displayName,
+    String? refCode,
   }) async {
     try {
       final res = await _dio.post(
         "/api/register",
-        data: {"email": email, "password": password, "accept": true},
+        data: {
+          "email": email,
+          "password": password,
+          "accept": true,
+          if (displayName != null && displayName.trim().isNotEmpty)
+            "display_name": displayName.trim(),
+          if (refCode != null && refCode.trim().isNotEmpty)
+            "ref": refCode.trim(),
+        },
         options: Options(headers: {"Content-Type": "application/json"}),
       );
       if (res.statusCode == 200) {
