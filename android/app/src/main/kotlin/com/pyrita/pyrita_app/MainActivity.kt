@@ -13,17 +13,15 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
 class MainActivity : FlutterActivity() {
+    private val fileProviderAuthority: String
+        get() = "$packageName.fileprovider"
+
     companion object {
         // Канал для нашего custom APK installer'а. open_filex и
         // share_plus оба пытались, оба silently failed на Android 14+
         // Samsung One UI (юзер: «моргнула и выключилась»). Native intent
         // с правильными FLAG'ами надёжнее.
         private const val INSTALLER_CHANNEL = "com.pyrita.pyrita_app/installer"
-
-        // Authority должен соответствовать FileProvider declaration в
-        // AndroidManifest.xml. Кейс-сенситивно.
-        private const val FILE_PROVIDER_AUTHORITY =
-            "com.pyrita.pyrita_app.fileprovider"
 
         // flutter_v2ray_client v3.2.0 plugin's notification disconnect button
         // setActions(0, "Отключить", notificationContentPendingIntent) — это
@@ -145,7 +143,7 @@ class MainActivity : FlutterActivity() {
 
         val uri: Uri = FileProvider.getUriForFile(
             this,
-            FILE_PROVIDER_AUTHORITY,
+            fileProviderAuthority,
             apk,
         )
 

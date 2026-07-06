@@ -37,9 +37,8 @@ dependencies:
   # SVG assets — logo-mark/lockup лежат в assets/images/ как SVG.
   flutter_svg: ^2.0.0
 
-  # System fonts integration — Manrope + JetBrains Mono. Download-on-demand
-  # с Google Fonts CDN — экономит APK size но требует первого online-старта.
-  # Для offline-first можно заменить на bundled .ttf — TODO для Phase D.
+  # System fonts integration — Manrope + JetBrains Mono are bundled offline.
+  # Runtime fetching is disabled in main.dart to keep VPN startup reliable.
   google_fonts: ^6.2.0
 
   # Date/time formatting на русский — ru_RU locale.
@@ -116,9 +115,10 @@ flutter:
 
   assets:
     - assets/images/
+    - assets/fonts/
 
-  # Fonts из Google Fonts подтянутся в runtime. Если решим bundle'ить
-  # .ttf — раскомментировать и положить файлы в assets/fonts/.
+  # Google Fonts are bundled in assets/fonts/ and runtime fetching is disabled
+  # in main.dart. VPN UI must start even when DNS or internet is broken.
   # fonts:
   #   - family: Manrope
   #     fonts:

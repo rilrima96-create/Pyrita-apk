@@ -6,11 +6,13 @@ import '../../core/api_client.dart';
 import '../../core/auth_storage.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets/py_app_icon.dart';
+import 'auth_bootstrap_decision.dart';
 
 /// Splash screen — рендерится 0.6-1.5 сек пока:
 ///   1. Читаем session-cookie из secure storage
 ///   2. Если есть — пробуем GET /api/me чтобы проверить что сессия живая
-///   3. Если живая → редирект на /home; если нет → /login
+///   3. Если /api/me вернул 401/403 → /login; сетевой сбой не сбрасывает
+///      сохраненную сессию и ведет на /home, где пользователь увидит ошибку.
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 
@@ -35,8 +37,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       try {
         await ApiClient.instance.getMe();
         authed = true;
-      } on ApiException {
-        authed = false;
+      } on ApiException catch (e) {
+        authed = !shouldSendBootstrapFailureToLogin(e.statusCode);
       }
     }
 

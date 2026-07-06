@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
 import 'notification_service.dart';
+import 'vpn_server_catalog.dart';
 
 /// Состояние VPN-туннеля для UI-слоя.
 ///
@@ -36,6 +37,9 @@ class PyritaVpnStatus {
     this.errorMessage,
     this.serverPingMs,
     this.preferredProtocolId = 'reality',
+    this.preferredServerId = defaultVpnServerId,
+    this.serverName = defaultVpnServerName,
+    this.serverCountryCode = defaultVpnServerCountryCode,
   });
 
   final PyritaVpnState state;
@@ -46,6 +50,15 @@ class PyritaVpnStatus {
   /// Pyrita-app — backend всегда говорит "Reality primary", это поле —
   /// клиентский override.
   final String preferredProtocolId;
+
+  /// Клиентский выбор локации из подписки.
+  final String preferredServerId;
+
+  /// Локация, по которой сейчас строится или был построен туннель.
+  final String serverName;
+
+  /// ISO-like код для UI-флага.
+  final String serverCountryCode;
 
   /// Текущая скорость отдачи, байт/сек.
   final int uploadSpeed;
@@ -84,6 +97,9 @@ class PyritaVpnStatus {
     String? errorMessage,
     int? serverPingMs,
     String? preferredProtocolId,
+    String? preferredServerId,
+    String? serverName,
+    String? serverCountryCode,
   }) {
     return PyritaVpnStatus(
       state: state ?? this.state,
@@ -95,8 +111,179 @@ class PyritaVpnStatus {
       errorMessage: errorMessage ?? this.errorMessage,
       serverPingMs: serverPingMs ?? this.serverPingMs,
       preferredProtocolId: preferredProtocolId ?? this.preferredProtocolId,
+      preferredServerId: preferredServerId ?? this.preferredServerId,
+      serverName: serverName ?? this.serverName,
+      serverCountryCode: serverCountryCode ?? this.serverCountryCode,
     );
   }
+}
+
+class _BuiltXrayConfig {
+  const _BuiltXrayConfig({
+    required this.config,
+    required this.server,
+  });
+
+  final String config;
+  final VpnServerProfile server;
+}
+
+@visibleForTesting
+Map<String, dynamic> buildHysteria2XrayConfigMap(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null || !isHysteria2SubscriptionUrl(url)) {
+    throw ArgumentError('url is not Hysteria2');
+  }
+
+  final host = uri.host.trim();
+  final port = uri.hasPort ? uri.port : 443;
+  final auth = _decodeHysteriaUrlPart(uri.userInfo);
+  if (host.isEmpty || port < 1 || port > 65535 || auth.isEmpty) {
+    throw StateError('HY2-ссылка сервера неполная');
+  }
+
+  final query = uri.queryParameters;
+  final sni = _trimOrNull(query['sni']) ?? host;
+  final tlsSettings = <String, dynamic>{
+    'serverName': sni,
+  };
+
+  final alpn = _splitHysteriaList(query['alpn']);
+  if (alpn.isNotEmpty) {
+    tlsSettings['alpn'] = alpn;
+  }
+
+  final streamSettings = <String, dynamic>{
+    'network': 'hysteria',
+    'security': 'tls',
+    'tlsSettings': tlsSettings,
+    'hysteriaSettings': <String, dynamic>{
+      'version': 2,
+      'auth': auth,
+      'udpIdleTimeout': 60,
+    },
+  };
+
+  final obfsType = _trimOrNull(query['obfs']);
+  final obfsPassword = _trimOrNull(
+    query['obfs-password'] ?? query['obfs_password'],
+  );
+  if ((obfsType == null) != (obfsPassword == null)) {
+    throw StateError('HY2-ссылка содержит неполные obfs-параметры');
+  }
+  if (obfsType != null && obfsPassword != null) {
+    streamSettings['udpmasks'] = [
+      {
+        'type': obfsType,
+        'settings': {'password': obfsPassword},
+      }
+    ];
+  }
+
+  return <String, dynamic>{
+    'log': {
+      'access': '',
+      'error': '',
+      'loglevel': 'error',
+      'dnsLog': false,
+    },
+    'inbounds': [
+      {
+        'tag': 'in_proxy',
+        'port': 10808,
+        'protocol': 'socks',
+        'listen': '127.0.0.1',
+        'settings': {
+          'auth': 'noauth',
+          'udp': true,
+          'userLevel': 8,
+        },
+        'sniffing': {'enabled': false},
+      }
+    ],
+    'outbounds': [
+      {
+        'tag': 'proxy',
+        'protocol': 'hysteria',
+        'settings': {
+          'version': 2,
+          'address': host,
+          'port': port,
+          // flutter_v2ray_client's Android wrapper reads `servers` to fill
+          // notification/status metadata. Xray ignores unknown settings here.
+          'servers': [
+            {
+              'address': host,
+              'port': port,
+            }
+          ],
+        },
+        'streamSettings': streamSettings,
+      },
+      {
+        'tag': 'direct',
+        'protocol': 'freedom',
+        'settings': {'domainStrategy': 'UseIp'},
+      },
+      {
+        'tag': 'blackhole',
+        'protocol': 'blackhole',
+        'settings': {},
+      },
+    ],
+    'dns': {
+      'servers': ['1.1.1.1', '8.8.8.8'],
+    },
+    'routing': {
+      'domainStrategy': 'UseIp',
+      'rules': [],
+      'balancers': [],
+    },
+  };
+}
+
+@visibleForTesting
+void stripRemovedXraySettings(Map<String, dynamic> configMap) {
+  void visit(Object? value) {
+    if (value is Map) {
+      value.remove('allowInsecure');
+      for (final child in value.values) {
+        visit(child);
+      }
+      return;
+    }
+    if (value is Iterable) {
+      for (final child in value) {
+        visit(child);
+      }
+    }
+  }
+
+  visit(configMap);
+}
+
+String _decodeHysteriaUrlPart(String value) {
+  try {
+    return Uri.decodeComponent(value);
+  } catch (_) {
+    return value;
+  }
+}
+
+String? _trimOrNull(String? value) {
+  final trimmed = value?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  return trimmed;
+}
+
+List<String> _splitHysteriaList(String? value) {
+  final raw = _trimOrNull(value);
+  if (raw == null) return const [];
+  return raw
+      .split(',')
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList(growable: false);
 }
 
 /// Riverpod-managed VPN controller — единая точка управления туннелем.
@@ -129,6 +316,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   /// `/api/me` + `/api/sub` round-trip'а при network change.
   String? _lastConfigForReconnect;
 
+  String? _lastServerNameForReconnect;
+
+  List<VpnServerProfile>? _serverProfilesCache;
+
   /// Period-таймер для обновления server ping каждые 5 сек когда connected.
   Timer? _pingTimer;
 
@@ -146,6 +337,7 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   Completer<void>? _connectedCompleter;
 
   static const _prefKeyPermissionRequested = 'vpn_permission_requested';
+  static const _prefKeyServerProfilesSnapshot = 'server_profiles_snapshot_v1';
 
   /// SharedPreferences key для предпочитаемого протокола. Один из id'шников
   /// из `/api/me/protocols` (см. ProtocolInfo.id):
@@ -161,6 +353,7 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   /// бросает ArgumentError. Если preferred недоступен → fallback на Reality
   /// с snackbar-warning'ом из UI слоя.
   static const _prefKeyPreferredProtocol = 'preferred_protocol';
+  static const _prefKeyPreferredServer = 'preferred_server';
   static const _defaultProtocol = 'reality';
 
   /// Курированный список RU-доменов которые должны идти direct (без VPN
@@ -224,7 +417,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     'domain:kinopoisk.ru', 'domain:dzen.ru',
     // Mail.ru / VK группа
     'domain:mail.ru', 'domain:list.ru', 'domain:inbox.ru', 'domain:bk.ru',
-    'domain:vk.com', 'domain:vk.ru', 'domain:vkontakte.ru', 'domain:vkuseraudio.net',
+    'domain:vk.com', 'domain:vk.ru', 'domain:vkontakte.ru',
+    'domain:vkuseraudio.net',
     'domain:ok.ru', 'domain:odnoklassniki.ru',
     'domain:my.com',
     // Маркетплейсы
@@ -304,11 +498,16 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       notificationIconResourceName: 'ic_notification',
     );
 
-    // Hydrate preferredProtocolId из SharedPreferences. До первой записи
-    // (юзер не switch'ал protocol) — default 'reality'.
+    // Hydrate local preferences. До первой записи — Reality + Helsinki.
     final preferred = await _getPreferredProtocol();
+    final preferredServer = await _getPreferredServer();
     if (mounted) {
-      state = state.copyWith(preferredProtocolId: preferred);
+      state = state.copyWith(
+        preferredProtocolId: preferred,
+        preferredServerId: preferredServer,
+        serverName: vpnServerNameFor(preferredServer),
+        serverCountryCode: vpnServerCountryCodeFor(preferredServer),
+      );
     }
 
     // Кастомная notification поверх plugin's PRIORITY_MIN. Slушаем
@@ -325,8 +524,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     // disconnect button — но VPN работает).
     try {
       await PyritaNotificationService.instance.init();
-      _disconnectSub = PyritaNotificationService.instance.disconnectRequests
-          .listen((_) {
+      _disconnectSub =
+          PyritaNotificationService.instance.disconnectRequests.listen((_) {
         if (mounted && state.isConnected) {
           unawaited(stop());
         }
@@ -355,9 +554,11 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       downloadTotal: s.download,
       duration: s.duration,
       // Сбрасываем ping при не-connected state (UI рендерит '—' в idle).
-      serverPingMs: mapped == PyritaVpnState.connected ? state.serverPingMs : null,
+      serverPingMs:
+          mapped == PyritaVpnState.connected ? state.serverPingMs : null,
       // Очищаем error message при успешном connect.
-      errorMessage: mapped == PyritaVpnState.connected ? null : state.errorMessage,
+      errorMessage:
+          mapped == PyritaVpnState.connected ? null : state.errorMessage,
     );
 
     // Ping-timer работает только когда туннель активен.
@@ -371,12 +572,15 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       // CONNECTED. Updates на каждом ping tick'е через
       // PyritaNotificationService.updatePing (debounced там же).
       unawaited(PyritaNotificationService.instance.showConnected(
+        serverName: state.serverName,
         pingMs: state.serverPingMs,
       ));
     } else {
       _stopPingTimer();
       if (mapped == PyritaVpnState.connecting) {
-        unawaited(PyritaNotificationService.instance.showConnecting());
+        unawaited(PyritaNotificationService.instance.showConnecting(
+          serverName: state.serverName,
+        ));
       } else {
         // disconnected / error — убираем notification полностью.
         unawaited(PyritaNotificationService.instance.hide());
@@ -417,7 +621,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
         print('[Pyrita-VPN] ping=$ms ms');
         state = state.copyWith(serverPingMs: ms);
         // Notification debounce'ит само если ping не сильно изменился.
-        unawaited(PyritaNotificationService.instance.updatePing(ms));
+        unawaited(PyritaNotificationService.instance.updatePing(
+          serverName: state.serverName,
+          pingMs: ms,
+        ));
       } catch (e) {
         // ignore: avoid_print
         print('[Pyrita-VPN] ping exception: $e');
@@ -434,8 +641,7 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
 
   void _wireConnectivity() {
     _connSub = Connectivity().onConnectivityChanged.listen((events) {
-      final hasNetwork =
-          events.any((e) => e != ConnectivityResult.none);
+      final hasNetwork = events.any((e) => e != ConnectivityResult.none);
 
       if (!hasNetwork) {
         // Сеть пропала. Plugin'у нужно ~10-30 сек чтобы понять что
@@ -458,6 +664,9 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
             state: PyritaVpnState.connecting,
             errorMessage: 'Ожидание сети…',
             preferredProtocolId: state.preferredProtocolId,
+            preferredServerId: state.preferredServerId,
+            serverName: state.serverName,
+            serverCountryCode: state.serverCountryCode,
           );
           _stopPingTimer();
         }
@@ -486,9 +695,16 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     final cached = _lastConfigForReconnect;
     if (cached != null) {
       try {
-        state = const PyritaVpnStatus(state: PyritaVpnState.connecting);
+        final serverName = _lastServerNameForReconnect ?? state.serverName;
+        state = PyritaVpnStatus(
+          state: PyritaVpnState.connecting,
+          preferredProtocolId: state.preferredProtocolId,
+          preferredServerId: state.preferredServerId,
+          serverName: serverName,
+          serverCountryCode: state.serverCountryCode,
+        );
         await _v2ray.startV2Ray(
-          remark: 'Pyrita · Хельсинки',
+          remark: 'Pyrita · $serverName',
           config: cached,
           proxyOnly: false,
           notificationDisconnectButtonName: 'Отключить',
@@ -562,12 +778,22 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       state = PyritaVpnStatus(
         state: PyritaVpnState.error,
         errorMessage: _humanizeError(e),
+        preferredProtocolId: state.preferredProtocolId,
+        preferredServerId: state.preferredServerId,
+        serverName: state.serverName,
+        serverCountryCode: state.serverCountryCode,
       );
       return;
     }
     if (!mounted) return;
 
-    state = const PyritaVpnStatus(state: PyritaVpnState.connecting);
+    state = PyritaVpnStatus(
+      state: PyritaVpnState.connecting,
+      preferredProtocolId: state.preferredProtocolId,
+      preferredServerId: state.preferredServerId,
+      serverName: state.serverName,
+      serverCountryCode: state.serverCountryCode,
+    );
     try {
       final me = await ApiClient.instance.getMe();
       final subUrl = me['subscription_url'] as String?;
@@ -575,8 +801,17 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
         throw StateError('Не удалось получить subscription_url');
       }
 
-      final config = await _buildXrayConfig(subUrl);
-      _lastConfigForReconnect = config;
+      final built = await _buildXrayConfig(subUrl);
+      _lastConfigForReconnect = built.config;
+      _lastServerNameForReconnect = built.server.name;
+      if (built.server.id != state.preferredServerId) {
+        await _setPreferredServer(built.server.id);
+      }
+      state = state.copyWith(
+        preferredServerId: built.server.id,
+        serverName: built.server.name,
+        serverCountryCode: built.server.countryCode,
+      );
 
       // Race-condition guard для VPN handoff. Когда Android grants permission
       // нашему app'у, он СНАЧАЛА убивает текущий active VPN (Hiddify etc.),
@@ -597,18 +832,20 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       // miss'нуть fast-path emit'а (некоторые сети handshake'ятся <100ms).
       _connectedCompleter ??= Completer<void>();
 
-      await _v2ray.startV2Ray(
-        remark: 'Pyrita · Хельсинки',
-        config: config,
-        proxyOnly: false,
-        notificationDisconnectButtonName: 'Отключить',
-      ).timeout(
-        const Duration(seconds: 60),
-        onTimeout: () => throw TimeoutException(
-          'VPN-движок не ответил за 60 сек. Возможно процесс упал.',
-          const Duration(seconds: 60),
-        ),
-      );
+      await _v2ray
+          .startV2Ray(
+            remark: 'Pyrita · ${built.server.name}',
+            config: built.config,
+            proxyOnly: false,
+            notificationDisconnectButtonName: 'Отключить',
+          )
+          .timeout(
+            const Duration(seconds: 60),
+            onTimeout: () => throw TimeoutException(
+              'VPN-движок не ответил за 60 сек. Возможно процесс упал.',
+              const Duration(seconds: 60),
+            ),
+          );
 
       // ignore: avoid_print
       print('[Pyrita-VPN] startV2Ray returned, awaiting CONNECTED status');
@@ -630,7 +867,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       } on TimeoutException {
         final failedProtocol = await _getPreferredProtocol();
         // ignore: avoid_print
-        print('[Pyrita-VPN] CONNECTED timeout (30s) for protocol=$failedProtocol; reverting to reality');
+        print(
+            '[Pyrita-VPN] CONNECTED timeout (30s) for protocol=$failedProtocol; reverting to reality');
         await _v2ray.stopV2Ray().catchError((_) {});
         // Reset preferred → Reality чтобы next start() взял рабочий
         // протокол. Если failed = reality сам — оставляем (значит сеть
@@ -655,11 +893,16 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       // ignore: avoid_print
       print('[Pyrita-VPN] start() exception: ${e.runtimeType}: $e');
       // ignore: avoid_print
-      print('[Pyrita-VPN] stack: ${st.toString().split('\n').take(5).join(' | ')}');
+      print(
+          '[Pyrita-VPN] stack: ${st.toString().split('\n').take(5).join(' | ')}');
       if (!mounted) return;
       state = PyritaVpnStatus(
         state: PyritaVpnState.error,
         errorMessage: _humanizeError(e),
+        preferredProtocolId: state.preferredProtocolId,
+        preferredServerId: state.preferredServerId,
+        serverName: state.serverName,
+        serverCountryCode: state.serverCountryCode,
       );
     }
   }
@@ -672,9 +915,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   Future<List<String>> fetchLogs() async {
     try {
       return await _v2ray.getLogs().timeout(
-        const Duration(seconds: 3),
-        onTimeout: () => ['(getLogs timeout — plugin busy, попробуй позже)'],
-      );
+            const Duration(seconds: 3),
+            onTimeout: () =>
+                ['(getLogs timeout — plugin busy, попробуй позже)'],
+          );
     } catch (_) {
       return [];
     }
@@ -682,6 +926,65 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
 
   /// Текущий cached config, если есть. Для debug-screen.
   String? get currentConfig => _lastConfigForReconnect;
+
+  Future<List<VpnServerProfile>> loadServerProfiles() async {
+    final cached = await _readServerProfilesCache();
+    if (state.isConnected && cached.isNotEmpty) {
+      return cached;
+    }
+
+    try {
+      return await _loadServerProfilesFresh().timeout(
+        const Duration(seconds: 6),
+      );
+    } catch (_) {
+      if (cached.isNotEmpty) return cached;
+      rethrow;
+    }
+  }
+
+  Future<List<VpnServerProfile>> _loadServerProfilesFresh() async {
+    final me = await ApiClient.instance.getMe();
+    final subUrl = me['subscription_url'] as String?;
+    if (subUrl == null || subUrl.isEmpty) {
+      throw StateError('Не удалось получить subscription_url');
+    }
+
+    final urls = await _fetchSubscriptionUrls(
+      subUrl,
+      includeUnsupported: true,
+    );
+    final profiles = buildVpnServerProfiles(urls);
+    if (profiles.isEmpty) {
+      throw StateError('В подписке нет серверов');
+    }
+    await _rememberServerProfiles(profiles);
+    return profiles;
+  }
+
+  Future<void> _rememberServerProfiles(List<VpnServerProfile> profiles) async {
+    _serverProfilesCache = profiles;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _prefKeyServerProfilesSnapshot,
+      encodeVpnServerProfilesSnapshot(profiles),
+    );
+  }
+
+  Future<List<VpnServerProfile>> _readServerProfilesCache() async {
+    final memory = _serverProfilesCache;
+    if (memory != null && memory.isNotEmpty) return memory;
+
+    final prefs = await SharedPreferences.getInstance();
+    final snapshot = prefs.getString(_prefKeyServerProfilesSnapshot);
+    if (snapshot == null || snapshot.isEmpty) return const [];
+
+    final profiles = decodeVpnServerProfilesSnapshot(snapshot);
+    if (profiles.isNotEmpty) {
+      _serverProfilesCache = profiles;
+    }
+    return profiles;
+  }
 
   /// Останавливает туннель. Plugin emit'ит DISCONNECTED через callback.
   Future<void> stop() async {
@@ -700,7 +1003,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   /// Reusable helper — используется как _buildXrayConfig (полный config),
   /// так и switchProtocol (pre-check что preferred protocol реально в
   /// подписке, иначе backend кэширует stale `available=true` flag).
-  Future<List<String>> _fetchSubscriptionUrls(String subUrl) async {
+  Future<List<String>> _fetchSubscriptionUrls(
+    String subUrl, {
+    bool includeUnsupported = false,
+  }) async {
     // Backend 2026-05-16 добавил `?format=singbox` в default subscription_url
     // (для Hiddify Pro/Max Shield filters). Pyrita-app использует Xray-core
     // через flutter_v2ray_client и парсит **base64-список** VLESS URL'ов —
@@ -726,7 +1032,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       throw StateError('Подписка вернула пустой ответ');
     }
 
-    final urls = _parseSubscriptionBody(raw);
+    final urls = parseSubscriptionUrls(
+      raw,
+      includeUnsupported: includeUnsupported,
+    );
     if (urls.isEmpty) {
       // Diagnostic: если backend опять изменит формат, юзер увидит первые
       // 200 chars body'а — поможет быстро понять что прилетело.
@@ -745,27 +1054,59 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   ///
   /// Pyrita backend (Marzban) возвращает либо base64-encoded плоский
   /// список URL'ов (по одной строке), либо plain text. Поддерживаем оба.
-  Future<String> _buildXrayConfig(String subUrl) async {
-    final urls = await _fetchSubscriptionUrls(subUrl);
+  Future<_BuiltXrayConfig> _buildXrayConfig(String subUrl) async {
+    final urls = await _fetchSubscriptionUrls(
+      subUrl,
+      includeUnsupported: true,
+    );
+    final profiles = buildVpnServerProfiles(urls);
+    if (profiles.isNotEmpty) {
+      await _rememberServerProfiles(profiles);
+    }
+
+    final preferredServer = await _getPreferredServer();
+    var selectedServerId = preferredServer;
+    var serverUrls = supportedSubscriptionUrlsForServer(urls, selectedServerId);
+
+    if (serverUrls.isEmpty && selectedServerId != defaultVpnServerId) {
+      selectedServerId = defaultVpnServerId;
+      serverUrls = supportedSubscriptionUrlsForServer(urls, selectedServerId);
+    }
+
+    if (serverUrls.isEmpty) {
+      serverUrls = urls.where(isSupportedSubscriptionUrl).toList();
+      if (serverUrls.isEmpty) {
+        throw StateError(
+          'В подписке есть только протоколы, которые это приложение пока не поддерживает',
+        );
+      }
+    }
 
     final preferred = await _getPreferredProtocol();
-    final vlessUrl = _pickPrimaryUrl(urls, preferred: preferred);
+    final primaryUrl = _pickPrimaryUrl(serverUrls, preferred: preferred);
+    final server = buildVpnServerProfiles([primaryUrl]).first;
 
-    // Парсинг через factory плагина — определяет протокол по prefix.
-    // Для VLESS+Reality возвращает `VlessURL` с заполненными
-    // realitySettings (publicKey, shortId, fingerprint).
-    final parsed = V2ray.parseFromURL(vlessUrl);
+    final Map<String, dynamic> configMap;
+    if (isHysteria2SubscriptionUrl(primaryUrl)) {
+      configMap = buildHysteria2XrayConfigMap(primaryUrl);
+    } else {
+      // Парсинг через factory плагина — определяет протокол по prefix.
+      // Для VLESS+Reality возвращает `VlessURL` с заполненными
+      // realitySettings (publicKey, shortId, fingerprint).
+      final parsed = V2ray.parseFromURL(primaryUrl);
 
-    // КРИТИЧЕСКИ ВАЖНО: используем getFullConfiguration() (метод), а не
-    // fullConfiguration (raw Map). Метод дополнительно вызывает
-    // removeNulls() — без этого config содержит десятки null полей
-    // в outbound1/outbound2/outbound3 settings (servers: null, response: null,
-    // address: null, port: null, secretKey: null, peers: null и т.п.).
-    // Xray-core на parse такого JSON может вести себя undefined: ранее
-    // зависал на startV2Ray() Future в pending state — обнаружено
-    // на Android 16 при первом acceptance test.
-    final cleanJson = parsed.getFullConfiguration();
-    final configMap = jsonDecode(cleanJson) as Map<String, dynamic>;
+      // КРИТИЧЕСКИ ВАЖНО: используем getFullConfiguration() (метод), а не
+      // fullConfiguration (raw Map). Метод дополнительно вызывает
+      // removeNulls() — без этого config содержит десятки null полей
+      // в outbound1/outbound2/outbound3 settings (servers: null, response: null,
+      // address: null, port: null, secretKey: null, peers: null и т.п.).
+      // Xray-core на parse такого JSON может вести себя undefined: ранее
+      // зависал на startV2Ray() Future в pending state — обнаружено
+      // на Android 16 при первом acceptance test.
+      final cleanJson = parsed.getFullConfiguration();
+      configMap = jsonDecode(cleanJson) as Map<String, dynamic>;
+    }
+    stripRemovedXraySettings(configMap);
 
     // Поднимаем log level до 'debug' — Xray начнёт писать detail'ы
     // handshake'а (TCP connect, TLS, Reality auth). Это нужно для
@@ -825,8 +1166,9 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     //
     // SNI/TLS: plugin'овский populateTlsSettings ставит `serverName = sni` и
     // `fingerprint` корректно — оставляем как есть.
-    if (vlessUrl.startsWith('vless://') && vlessUrl.contains('type=xhttp')) {
-      _injectXHttpSettings(configMap, vlessUrl);
+    if (primaryUrl.startsWith('vless://') &&
+        primaryUrl.contains('type=xhttp')) {
+      _injectXHttpSettings(configMap, primaryUrl);
     }
 
     // Routing:
@@ -874,7 +1216,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       ],
     };
 
-    return jsonEncode(configMap);
+    return _BuiltXrayConfig(
+      config: jsonEncode(configMap),
+      server: server,
+    );
   }
 
   /// Patches the outbound's streamSettings с правильным `xhttpSettings`
@@ -910,9 +1255,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       print('[Pyrita-VPN] XHTTP URL missing valid path: $url');
       return;
     }
-    final hostHeader = uri.queryParameters['host'] ??
-        uri.queryParameters['sni'] ??
-        uri.host;
+    final hostHeader =
+        uri.queryParameters['host'] ?? uri.queryParameters['sni'] ?? uri.host;
     final mode = uri.queryParameters['mode'] ?? 'auto';
 
     final outbounds = configMap['outbounds'] as List?;
@@ -943,8 +1287,7 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     final tlsSettings = streamSettings['tlsSettings'];
     if (tlsSettings is Map) {
       final currentAlpn = tlsSettings['alpn'];
-      if (currentAlpn == null ||
-          (currentAlpn is List && currentAlpn.isEmpty)) {
+      if (currentAlpn == null || (currentAlpn is List && currentAlpn.isEmpty)) {
         tlsSettings['alpn'] = <String>['h2', 'http/1.1'];
         // ignore: avoid_print
         print('[Pyrita-VPN] XHTTP TLS alpn injected (default h2,http/1.1)');
@@ -952,31 +1295,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     }
 
     // ignore: avoid_print
-    print('[Pyrita-VPN] XHTTP settings injected: path=$path host=$hostHeader mode=$mode');
-  }
-
-  /// Marzban sub может прийти как plain text или base64 (зависит от
-  /// настроек). Пытаемся декодировать base64; если не получается —
-  /// считаем что это уже plain text.
-  List<String> _parseSubscriptionBody(String body) {
-    String text;
-    try {
-      // Чистим whitespace и переносы — base64 может приходить «склеенным»
-      final cleaned = body.replaceAll(RegExp(r'\s+'), '');
-      text = utf8.decode(base64.decode(cleaned));
-    } catch (_) {
-      text = body;
-    }
-
-    return text
-        .split(RegExp(r'[\r\n]+'))
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty &&
-            (l.startsWith('vless://') ||
-                l.startsWith('vmess://') ||
-                l.startsWith('trojan://') ||
-                l.startsWith('ss://')))
-        .toList();
+    print(
+        '[Pyrita-VPN] XHTTP settings injected: path=$path host=$hostHeader mode=$mode');
   }
 
   /// Выбирает primary URL из списка с учётом preferred protocol.
@@ -992,7 +1312,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   ///   3. Если VLESS нет вовсе → fallback на любой parseable
   ///      (vmess/trojan/ss/socks) — это «recovery mode» если backend
   ///      сменил основной протокол.
-  String _pickPrimaryUrl(List<String> urls, {String preferred = _defaultProtocol}) {
+  String _pickPrimaryUrl(List<String> urls,
+      {String preferred = _defaultProtocol}) {
     // Step 1: попробовать matching preferred (если не default).
     if (preferred != _defaultProtocol) {
       final matched = _findByPreferred(urls, preferred);
@@ -1021,7 +1342,15 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     );
     if (anyVless.isNotEmpty) return anyVless;
 
-    // Step 5: Recovery mode — любой parseable URL (если backend сменил
+    // Step 5: Hysteria2. flutter_v2ray_client не парсит hy2:// через
+    // parseFromURL, поэтому ниже для него есть ручной Xray-config builder.
+    final anyHysteria2 = urls.firstWhere(
+      isHysteria2SubscriptionUrl,
+      orElse: () => '',
+    );
+    if (anyHysteria2.isNotEmpty) return anyHysteria2;
+
+    // Step 6: Recovery mode — любой parseable URL (если backend сменил
     // primary protocol на trojan/ss/vmess — клиент пытается подключиться
     // через него вместо упорного crash'а с «VLESS не найден»).
     final anyParseable = urls.firstWhere(
@@ -1052,9 +1381,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
           // method ciphers могут потребовать дополнительной отладки.
           return u.startsWith('ss://');
         case 'hysteria2':
+          return isHysteria2SubscriptionUrl(u);
         case 'tuic':
-          // Custom protocols — plugin их не парсит. Возвращаем null,
-          // caller fallback'нет на default. UI слой должен ДО switchProtocol
+          // TUIC требует отдельный core/parser. Возвращаем null, caller
+          // fallback'нет на default. UI слой должен ДО switchProtocol
           // проверить что preferred parseable.
           return false;
         default:
@@ -1078,6 +1408,16 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   Future<void> _setPreferredProtocol(String id) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefKeyPreferredProtocol, id);
+  }
+
+  Future<String> _getPreferredServer() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_prefKeyPreferredServer) ?? defaultVpnServerId;
+  }
+
+  Future<void> _setPreferredServer(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefKeyPreferredServer, id);
   }
 
   /// Human-readable имя протокола для error-banner'ов. Hardcoded короткий
@@ -1117,9 +1457,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       );
     }
     // Plugin's parseFromURL поддерживает только vless / vmess / trojan / ss /
-    // socks. Hy2 / TUIC требуют custom parser (Phase E). Блокируем
-    // переключение чтобы не получить crash в _buildXrayConfig.
-    const parseable = {'reality', 'xhttp', 'ss2022'};
+    // socks. Hy2 собираем вручную ниже; TUIC требует отдельный core/parser.
+    const parseable = {'reality', 'xhttp', 'ss2022', 'hysteria2'};
     if (!parseable.contains(id)) {
       throw StateError(
         'Протокол ${entry.name} пока не поддерживается на этом устройстве. '
@@ -1139,8 +1478,18 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       if (subUrl == null || subUrl.isEmpty) {
         throw StateError('Не удалось получить subscription_url');
       }
-      final urls = await _fetchSubscriptionUrls(subUrl);
-      final matched = _findByPreferred(urls, id);
+      final urls = await _fetchSubscriptionUrls(
+        subUrl,
+        includeUnsupported: true,
+      );
+      final serverUrls = supportedSubscriptionUrlsForServer(
+        urls,
+        state.preferredServerId,
+      );
+      final urlsToCheck = serverUrls.isNotEmpty
+          ? serverUrls
+          : urls.where(isSupportedSubscriptionUrl).toList();
+      final matched = _findByPreferred(urlsToCheck, id);
       if (matched == null) {
         throw StateError(
           '${entry.name} помечен как доступный, но сервер не положил его '
@@ -1168,9 +1517,58 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     return false;
   }
 
+  Future<bool> switchServer(
+    String id, {
+    List<VpnServerProfile>? profiles,
+  }) async {
+    if (state.isConnecting) {
+      throw StateError('Дождитесь завершения текущего подключения');
+    }
+
+    final catalog = profiles ?? await loadServerProfiles();
+    final entry = catalog.firstWhere(
+      (profile) => profile.id == id,
+      orElse: () => throw StateError('Неизвестный сервер: $id'),
+    );
+    if (!entry.supported) {
+      throw StateError(
+        entry.unsupportedReason ??
+            'Этот сервер пока нельзя запустить в приложении',
+      );
+    }
+
+    if (id == state.preferredServerId) {
+      state = state.copyWith(
+        serverName: entry.name,
+        serverCountryCode: entry.countryCode,
+      );
+      return false;
+    }
+
+    final wasConnected = state.isConnected;
+    await _setPreferredServer(id);
+    state = state.copyWith(
+      preferredServerId: id,
+      serverName: entry.name,
+      serverCountryCode: entry.countryCode,
+    );
+
+    if (wasConnected) {
+      await stop();
+      await Future.delayed(const Duration(milliseconds: 1500));
+      _lastConfigForReconnect = null;
+      _lastServerNameForReconnect = null;
+      await start();
+      return true;
+    }
+    return false;
+  }
+
   /// Текущий preferred protocol id (для UI active-state). Async чтобы не
   /// блокировать build на SharedPreferences.
   Future<String> get preferredProtocol => _getPreferredProtocol();
+
+  Future<String> get preferredServer => _getPreferredServer();
 
   String _humanizeError(Object e) {
     // ignore: avoid_print

@@ -8,6 +8,7 @@ import '../../core/api_client.dart';
 import '../../core/distribution.dart';
 import '../../core/theme.dart';
 import '../../core/vpn_controller.dart';
+import '../../core/vpn_server_catalog.dart';
 import '../../shared/widgets/py_app_icon.dart';
 import '../../shared/widgets/py_button.dart';
 import '../../shared/widgets/py_card.dart';
@@ -262,6 +263,47 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  Future<void> _showServerPicker() async {
+    HapticFeedback.selectionClick();
+    final controller = ref.read(vpnControllerProvider.notifier);
+    final currentId = ref.read(vpnControllerProvider).preferredServerId;
+    final profilesFuture = controller.loadServerProfiles();
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black54,
+      builder: (sheetContext) => _ServerPickerSheet(
+        profilesFuture: profilesFuture,
+        currentId: currentId,
+        onSelect: (profile, profiles) async {
+          Navigator.of(sheetContext).pop();
+          try {
+            final reconnected = await controller.switchServer(
+              profile.id,
+              profiles: profiles,
+            );
+            if (!mounted) return;
+            _showSnack(
+              reconnected
+                  ? 'Переподключаемся через ${profile.name}'
+                  : 'Выбран сервер: ${profile.name}',
+            );
+          } catch (e) {
+            if (!mounted) return;
+            _showSnack(_serverSwitchError(e));
+          }
+        },
+      ),
+    );
+  }
+
+  String _serverSwitchError(Object e) {
+    if (e is StateError) return e.message;
+    if (e is ApiException) return e.message;
+    return 'Не удалось выбрать сервер';
+  }
+
   /// Диалог при granted=false от VpnService.prepare(). Покрывает оба
   /// сценария: юзер deny'нул system-dialog ИЛИ у него уже активен
   /// другой VPN (Android API не различает их).
@@ -413,6 +455,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     _ServerCard(
                       connected: vpnStatus.isConnected,
                       pingMs: vpnStatus.serverPingMs,
+                      name: vpnStatus.serverName,
+                      countryCode: vpnStatus.serverCountryCode,
+                      onTap: _showServerPicker,
                     ),
                     const SizedBox(height: PyDS.sp2 + 2),
                     _StatRow(status: vpnStatus),
@@ -642,120 +687,363 @@ class _StatusBlock extends StatelessWidget {
 }
 
 class _ServerCard extends StatelessWidget {
-  const _ServerCard({required this.connected, this.pingMs});
+  const _ServerCard({
+    required this.connected,
+    required this.name,
+    required this.countryCode,
+    required this.onTap,
+    this.pingMs,
+  });
 
   final bool connected;
+  final String name;
+  final String countryCode;
+  final VoidCallback onTap;
   final int? pingMs;
 
   @override
   Widget build(BuildContext context) {
-    return PyCard(
-      padding: const EdgeInsets.symmetric(
-        horizontal: PyDS.sp4 + 2,
-        vertical: PyDS.sp3 + 2,
-      ),
-      child: Row(
-        children: [
-          const PyFlag(code: 'FI', size: 36),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'СЕРВЕР',
-                  style: PyDS.font(
-                    size: 10,
-                    weight: FontWeight.w600,
-                    letterSpacing: 0.4,
-                    color: PyDS.textFaint,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                RichText(
-                  text: TextSpan(
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: PyCard(
+        padding: const EdgeInsets.symmetric(
+          horizontal: PyDS.sp4 + 2,
+          vertical: PyDS.sp3 + 2,
+        ),
+        child: Row(
+          children: [
+            PyFlag(code: countryCode, size: 36),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'СЕРВЕР',
                     style: PyDS.font(
-                      size: 15,
-                      weight: FontWeight.w700,
-                      color: PyDS.text,
+                      size: 10,
+                      weight: FontWeight.w600,
+                      letterSpacing: 0.4,
+                      color: PyDS.textFaint,
                     ),
+                  ),
+                  const SizedBox(height: 2),
+                  RichText(
+                    text: TextSpan(
+                      style: PyDS.font(
+                        size: 15,
+                        weight: FontWeight.w700,
+                        color: PyDS.text,
+                      ),
+                      children: [
+                        TextSpan(text: '$name '),
+                        TextSpan(
+                          text: '· $countryCode',
+                          style: PyDS.font(
+                            size: 15,
+                            weight: FontWeight.w500,
+                            color: PyDS.textSoft,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Live ping показываем только когда connected и измерение есть.
+            // Без измерения (первые 5 сек после connect) — рендерим только
+            // зелёную точку + dash, без числа.
+            if (connected)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Row(
                     children: [
-                      const TextSpan(text: 'Хельсинки '),
-                      TextSpan(
-                        text: '· FI',
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: PyDS.on,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: PyDS.on.withValues(alpha: 0.6),
+                              blurRadius: 8,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        pingMs != null ? '$pingMs' : '—',
                         style: PyDS.font(
-                          size: 15,
-                          weight: FontWeight.w500,
-                          color: PyDS.textSoft,
+                          size: 13,
+                          weight: FontWeight.w700,
+                          color: PyDS.on,
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        'MS',
+                        style: PyDS.font(
+                          size: 10,
+                          weight: FontWeight.w600,
+                          letterSpacing: 0.4,
+                          color: PyDS.textFaint,
                         ),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 2),
+                  const Icon(
+                    Icons.chevron_right,
+                    size: 14,
+                    color: PyDS.textFaint,
+                  ),
+                ],
+              )
+            else
+              const Icon(
+                Icons.chevron_right,
+                size: 14,
+                color: PyDS.textFaint,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ServerPickerSheet extends StatelessWidget {
+  const _ServerPickerSheet({
+    required this.profilesFuture,
+    required this.currentId,
+    required this.onSelect,
+  });
+
+  final Future<List<VpnServerProfile>> profilesFuture;
+  final String currentId;
+  final Future<void> Function(
+    VpnServerProfile profile,
+    List<VpnServerProfile> profiles,
+  ) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        margin: const EdgeInsets.all(PyDS.sp2),
+        padding: const EdgeInsets.fromLTRB(
+          PyDS.sp4,
+          PyDS.sp4,
+          PyDS.sp4,
+          PyDS.sp3,
+        ),
+        decoration: BoxDecoration(
+          color: PyDS.bg2,
+          borderRadius: BorderRadius.circular(PyDS.rLg),
+          border: Border.all(color: PyDS.stroke),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Сервер',
+                    style: PyDS.font(
+                      size: 18,
+                      weight: FontWeight.w800,
+                      color: PyDS.text,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Закрыть',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    color: PyDS.textMute,
+                  ),
                 ),
               ],
             ),
-          ),
-          // Live ping показываем только когда connected и измерение есть.
-          // Без измерения (первые 5 сек после connect) — рендерим только
-          // зелёную точку + dash, без числа.
-          if (connected)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Row(
+            const SizedBox(height: PyDS.sp2),
+            FutureBuilder<List<VpnServerProfile>>(
+              future: profilesFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const SizedBox(
+                    height: 132,
+                    child: Center(
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: PyDS.goldLight,
+                      ),
+                    ),
+                  );
+                }
+
+                if (snapshot.hasError) {
+                  return _ServerPickerError(error: snapshot.error);
+                }
+
+                final profiles = snapshot.data ?? const <VpnServerProfile>[];
+                if (profiles.isEmpty) {
+                  return const _ServerPickerError();
+                }
+
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: PyDS.on,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: PyDS.on.withValues(alpha: 0.6),
-                            blurRadius: 8,
-                          ),
-                        ],
+                    for (final profile in profiles)
+                      _ServerOptionRow(
+                        profile: profile,
+                        selected: profile.id == currentId,
+                        onTap: profile.supported
+                            ? () {
+                                onSelect(profile, profiles);
+                              }
+                            : null,
                       ),
-                    ),
-                    const SizedBox(width: 4),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ServerOptionRow extends StatelessWidget {
+  const _ServerOptionRow({
+    required this.profile,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final VpnServerProfile profile;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    final subtitle = enabled
+        ? profile.protocolLabel
+        : profile.unsupportedReason ?? profile.protocolLabel;
+
+    return Opacity(
+      opacity: enabled ? 1 : 0.55,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 64),
+          padding: const EdgeInsets.symmetric(vertical: PyDS.sp2),
+          decoration: const BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: PyDS.stroke),
+            ),
+          ),
+          child: Row(
+            children: [
+              PyFlag(code: profile.countryCode, size: 34),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
                     Text(
-                      pingMs != null ? '$pingMs' : '—',
+                      profile.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: PyDS.font(
-                        size: 13,
+                        size: 15,
                         weight: FontWeight.w700,
-                        color: PyDS.on,
+                        color: enabled ? PyDS.text : PyDS.textMute,
                       ),
                     ),
-                    const SizedBox(width: 2),
+                    const SizedBox(height: 3),
                     Text(
-                      'MS',
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: PyDS.font(
-                        size: 10,
-                        weight: FontWeight.w600,
-                        letterSpacing: 0.4,
+                        size: 11.5,
+                        weight: FontWeight.w500,
+                        height: 1.25,
                         color: PyDS.textFaint,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 2),
+              ),
+              const SizedBox(width: 10),
+              if (!enabled)
                 const Icon(
-                  Icons.chevron_right,
-                  size: 14,
+                  Icons.lock_outline_rounded,
+                  size: 18,
+                  color: PyDS.textFaint,
+                )
+              else if (selected)
+                const Icon(
+                  Icons.check_circle_rounded,
+                  size: 20,
+                  color: PyDS.on,
+                )
+              else
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 20,
                   color: PyDS.textFaint,
                 ),
-              ],
-            )
-          else
-            const Icon(
-              Icons.chevron_right,
-              size: 14,
-              color: PyDS.textFaint,
-            ),
-        ],
+            ],
+          ),
+        ),
       ),
     );
+  }
+}
+
+class _ServerPickerError extends StatelessWidget {
+  const _ServerPickerError({this.error});
+
+  final Object? error;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 132,
+      child: Center(
+        child: Text(
+          _text,
+          textAlign: TextAlign.center,
+          style: PyDS.font(
+            size: 13,
+            weight: FontWeight.w600,
+            height: 1.35,
+            color: PyDS.textSoft,
+          ),
+        ),
+      ),
+    );
+  }
+
+  String get _text {
+    final e = error;
+    if (e is StateError) return e.message;
+    if (e is ApiException) return e.message;
+    return 'Не удалось загрузить список серверов';
   }
 }
 

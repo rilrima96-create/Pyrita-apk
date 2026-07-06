@@ -43,6 +43,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["appLabel"] = "Pyrita"
     }
 
     // Signing configs. На tag-сборках (CI build-release job) использует release
@@ -66,6 +67,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            manifestPlaceholders["appLabel"] = "Pyrita QA"
+        }
+
         release {
             signingConfig = signingConfigs.getByName("release")
             // Минификацию (R8/proguard) пока не включаем — добавим в Phase D

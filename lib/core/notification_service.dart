@@ -88,10 +88,8 @@ class PyritaNotificationService {
     try {
       // Создаём channel явно (Android 8+). Не делаем на channel'е
       // звуки/vibrate — это persistent status notification, не alert.
-      final androidImpl = _plugin
-          .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
-          >();
+      final androidImpl = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
       await androidImpl?.createNotificationChannel(
         const AndroidNotificationChannel(
           _channelId,
@@ -127,7 +125,8 @@ class PyritaNotificationService {
   /// Показать notification «Подключено» с текущим ping'ом.
   /// v0.1.13: catch'аем PlatformException чтобы failure не break'нула
   /// VPN flow (см. comment в init()).
-  Future<void> showConnected({String serverName = 'Хельсинки', int? pingMs}) async {
+  Future<void> showConnected(
+      {String serverName = 'Хельсинки', int? pingMs}) async {
     await init();
     if (_pluginUnusable) return; // v0.1.14: skip silently if init failed
     _lastPingMs = pingMs;
@@ -149,7 +148,10 @@ class PyritaNotificationService {
   /// Update только если ping реально изменился (debounce шторки от
   /// frequent re-render'ов каждые 5 сек). Tolerance 5 мс — sub-noise
   /// не релевантен юзеру.
-  Future<void> updatePing(int? pingMs) async {
+  Future<void> updatePing({
+    String serverName = 'Хельсинки',
+    int? pingMs,
+  }) async {
     if (!_initialized || _pluginUnusable) return;
     final prev = _lastPingMs;
     if (pingMs == null && prev == null) return;
@@ -159,7 +161,7 @@ class PyritaNotificationService {
     try {
       await _plugin.show(
         _notificationId,
-        'Pyrita · Хельсинки',
+        'Pyrita · $serverName',
         'Подключено$pingStr',
         _details(),
       );
@@ -172,14 +174,14 @@ class PyritaNotificationService {
 
   /// Показать «Подключение…» — без disconnect action (юзер ещё не
   /// connected, отключать нечего; ставит pulse в idle).
-  Future<void> showConnecting() async {
+  Future<void> showConnecting({String serverName = 'Хельсинки'}) async {
     await init();
     if (_pluginUnusable) return;
     _lastPingMs = null;
     try {
       await _plugin.show(
         _notificationId,
-        'Pyrita',
+        'Pyrita · $serverName',
         'Подключение…',
         _details(includeAction: false),
       );

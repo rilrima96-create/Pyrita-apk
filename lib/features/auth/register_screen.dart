@@ -396,9 +396,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         ],
                         const SizedBox(height: PyDS.sp4),
                         PyButtonGold(
-                          label: _loading
-                              ? 'Создаём…'
-                              : 'Создать и включить Pro',
+                          label:
+                              _loading ? 'Создаём…' : 'Создать и включить Pro',
                           busy: _loading,
                           onPressed: _submit,
                           fontSize: 15,
@@ -420,13 +419,20 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                           ),
                         ),
                         GestureDetector(
+                          behavior: HitTestBehavior.opaque,
                           onTap: () => context.go('/login'),
-                          child: Text(
-                            'Войти',
-                            style: PyDS.font(
-                              size: 12.5,
-                              weight: FontWeight.w700,
-                              color: PyDS.goldLight,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: PyDS.sp2,
+                              vertical: PyDS.sp3,
+                            ),
+                            child: Text(
+                              'Войти',
+                              style: PyDS.font(
+                                size: 12.5,
+                                weight: FontWeight.w700,
+                                color: PyDS.goldLight,
+                              ),
                             ),
                           ),
                         ),

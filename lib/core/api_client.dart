@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'auth_cookie_policy.dart';
 import 'auth_storage.dart';
 
 /// Singleton-doer для всех HTTP-запросов к api.pyrita.com.
@@ -52,8 +53,9 @@ class ApiClient {
         return true;
       }
       final body = res.data;
-      final errorMsg =
-          (body is Map && body["error"] is String) ? body["error"] as String : null;
+      final errorMsg = (body is Map && body["error"] is String)
+          ? body["error"] as String
+          : null;
       throw ApiException(
         statusCode: res.statusCode ?? -1,
         message: errorMsg ?? "Ошибка входа",
@@ -120,8 +122,9 @@ class ApiClient {
         return;
       }
       final body = res.data;
-      final errorMsg =
-          (body is Map && body["error"] is String) ? body["error"] as String : null;
+      final errorMsg = (body is Map && body["error"] is String)
+          ? body["error"] as String
+          : null;
       throw ApiException(
         statusCode: res.statusCode ?? -1,
         message: errorMsg ?? "Не удалось зарегистрироваться",
@@ -246,8 +249,9 @@ class ApiClient {
         return;
       }
       final body = res.data;
-      final errorMsg =
-          (body is Map && body["error"] is String) ? body["error"] as String : null;
+      final errorMsg = (body is Map && body["error"] is String)
+          ? body["error"] as String
+          : null;
       throw ApiException(
         statusCode: res.statusCode ?? -1,
         message: errorMsg ?? "Не удалось удалить аккаунт",
@@ -304,7 +308,8 @@ class ApiClient {
     try {
       final res = await _dio.get("/api/me/referral");
       if (res.statusCode == 200 && res.data is Map) {
-        return ReferralData.fromJson(Map<String, dynamic>.from(res.data as Map));
+        return ReferralData.fromJson(
+            Map<String, dynamic>.from(res.data as Map));
       }
       throw ApiException(
         statusCode: res.statusCode ?? -1,
@@ -325,7 +330,8 @@ class ApiClient {
         final devices = raw is List
             ? raw
                 .whereType<Map>()
-                .map((e) => DeviceSession.fromJson(Map<String, dynamic>.from(e)))
+                .map(
+                    (e) => DeviceSession.fromJson(Map<String, dynamic>.from(e)))
                 .toList()
             : <DeviceSession>[];
         final limit = (m['limit'] as num?)?.toInt() ?? 5;
@@ -343,7 +349,8 @@ class ApiClient {
   /// DELETE /api/me/devices?id=<n>. «Забыть» устройство из списка.
   Future<void> forgetDevice(int id) async {
     try {
-      final res = await _dio.delete("/api/me/devices", queryParameters: {"id": id});
+      final res =
+          await _dio.delete("/api/me/devices", queryParameters: {"id": id});
       if (res.statusCode == 200) return;
       throw ApiException(
         statusCode: res.statusCode ?? -1,
@@ -361,8 +368,7 @@ class ApiClient {
     try {
       final res = await _dio.get("/api/me/stats");
       if (res.statusCode == 200 && res.data is Map) {
-        return UsageStats.fromJson(
-            Map<String, dynamic>.from(res.data as Map));
+        return UsageStats.fromJson(Map<String, dynamic>.from(res.data as Map));
       }
       throw ApiException(
         statusCode: res.statusCode ?? -1,
@@ -602,7 +608,12 @@ class _AuthCookieInterceptor extends Interceptor {
       // Нам нужна только name=value часть для re-attach при следующем запросе.
       // Берём первую cookie из списка — у нас только одна session-cookie.
       final first = setCookie.first;
-      final nameValue = first.split(";").first.trim();
+      final nameValue = sessionCookieValueForStorage(first);
+      if (nameValue == null) {
+        await AuthStorage.clearSession();
+        handler.next(response);
+        return;
+      }
       // ВАЖНО: await — без него race condition. Если юзер быстро шлёт второй
       // запрос (login → getMe), interceptor может ещё не сохранить cookie
       // → второй запрос идёт без auth → 401 → юзера выкидывает на login.

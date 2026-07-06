@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,12 +7,14 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/api_client.dart';
+import '../../core/auth_storage.dart';
 import '../../core/distribution.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets/py_app_icon.dart';
 import '../../shared/widgets/py_button.dart';
 import '../../shared/widgets/py_card.dart';
 import '../../shared/widgets/py_tab_bar.dart';
+import 'account_optional_loader.dart';
 
 /// Личный кабинет: профиль, план, использование, устройства, реферальная
 /// программа, протокол, история платежей.
@@ -25,7 +29,13 @@ class AccountScreen extends ConsumerStatefulWidget {
 }
 
 class _AccountScreenState extends ConsumerState<AccountScreen> {
+  static const _accountCoreTimeout = Duration(seconds: 5);
+  static const _optionalSectionTimeout = Duration(seconds: 4);
+  static const _deviceLimit = 3;
+
   Map<String, dynamic>? _me;
+  String? _cachedEmail;
+  bool _meAttemptFinished = false;
 
   /// `null` пока грузим; `[]` после загрузки если оплат не было.
   List<PaymentRecord>? _payments;
@@ -42,6 +52,7 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   @override
   void initState() {
     super.initState();
+    _loadCachedEmail();
     _loadMe();
     _loadPayments();
     _loadStats();
@@ -49,47 +60,75 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     _loadReferral();
   }
 
+  Future<void> _loadCachedEmail() async {
+    final email = await AuthStorage.getCachedEmail();
+    if (!mounted || email == null || email.trim().isEmpty) return;
+    setState(() => _cachedEmail = email.trim());
+  }
+
   Future<void> _loadMe() async {
     try {
-      final me = await ApiClient.instance.getMe();
+      final me = await ApiClient.instance.getMe().timeout(_accountCoreTimeout);
+      final email = me['email'] as String?;
+      if (email != null && email.trim().isNotEmpty) {
+        await AuthStorage.setCachedEmail(email.trim());
+      }
       if (!mounted) return;
-      setState(() => _me = me);
+      setState(() {
+        _me = me;
+        _meAttemptFinished = true;
+      });
     } on ApiException catch (e) {
       if (!mounted) return;
       if (e.statusCode == 401) {
         context.go('/login');
+        return;
       }
+      setState(() => _meAttemptFinished = true);
+      debugPrint('Failed to load account: ${e.message}');
+    } on TimeoutException catch (_) {
+      if (!mounted) return;
+      setState(() => _meAttemptFinished = true);
+      debugPrint('Timed out while loading account');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _meAttemptFinished = true);
+      debugPrint('Unexpected account load failure: $e');
     }
   }
 
   Future<void> _loadPayments() async {
-    try {
-      final p = await ApiClient.instance.getPayments();
-      if (!mounted) return;
-      setState(() => _payments = p);
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      // 401 уже обработает _loadMe(); тут просто оставляем _payments=null
-      // → UI покажет skeleton-плейсхолдер.
-      if (e.statusCode != 401) {
+    final p = await loadOptionalAccountSection<List<PaymentRecord>>(
+      load: ApiClient.instance.getPayments,
+      fallback: const <PaymentRecord>[],
+      timeout: _optionalSectionTimeout,
+      onError: (error, _) {
+        if (!mounted) return;
+        // 401 уже обработает _loadMe(); остальные ошибки не должны держать
+        // кабинет в состоянии бесконечной загрузки.
+        if (error is ApiException && error.statusCode == 401) return;
         // Логируем, но не падаем — Account-экран должен работать даже если
         // payments-endpoint лежит.
-        debugPrint('Failed to load payments: ${e.message}');
-      }
-    }
+        debugPrint('Failed to load payments: $error');
+      },
+    );
+    if (!mounted) return;
+    setState(() => _payments = p);
   }
 
   Future<void> _loadStats() async {
-    try {
-      final s = await ApiClient.instance.getStats();
-      if (!mounted) return;
-      setState(() => _stats = s);
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      if (e.statusCode != 401) {
-        debugPrint('Failed to load stats: ${e.message}');
-      }
-    }
+    final s = await loadOptionalAccountSection<UsageStats>(
+      load: ApiClient.instance.getStats,
+      fallback: const UsageStats(),
+      timeout: _optionalSectionTimeout,
+      onError: (error, _) {
+        if (!mounted) return;
+        if (error is ApiException && error.statusCode == 401) return;
+        debugPrint('Failed to load stats: $error');
+      },
+    );
+    if (!mounted) return;
+    setState(() => _stats = s);
   }
 
   /// Hardcoded UI лимит. Backend Marzban может выдать больше (если
@@ -97,47 +136,49 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
   /// принудительно отключает «лишние» — kick'аем все кроме 3 самых
   /// свежих по `last_seen_at`. Это secure-by-default: один аккаунт = 3
   /// устройства, без обхода через purchase-of-multiple subscriptions.
-  static const _deviceLimit = 3;
-
   Future<void> _loadDevices() async {
-    try {
-      final d = await ApiClient.instance.getDevices();
-      if (!mounted) return;
+    final d = await loadOptionalAccountSection<DeviceListResult>(
+      load: () async {
+        final d = await ApiClient.instance.getDevices();
 
-      // Auto-kick: если устройств больше лимита — `forgetDevice` для
-      // самых старых. Bypass: list уже отсортирован backend'ом по
-      // last_seen_at DESC, поэтому keepers = first N, kickers = rest.
-      if (d.devices.length > _deviceLimit) {
-        final kickers = d.devices.skip(_deviceLimit).toList();
-        for (final dev in kickers) {
+        // Auto-kick: если устройств больше лимита — `forgetDevice` для
+        // самых старых. Bypass: list уже отсортирован backend'ом по
+        // last_seen_at DESC, поэтому keepers = first N, kickers = rest.
+        if (d.devices.length > _deviceLimit) {
+          final kickers = d.devices.skip(_deviceLimit).toList();
+          for (final dev in kickers) {
+            try {
+              await ApiClient.instance.forgetDevice(dev.id);
+            } catch (e) {
+              debugPrint('Failed to kick device ${dev.id}: $e');
+            }
+          }
+          // Refetch чтобы UI показал актуальный список (3 шт).
           try {
-            await ApiClient.instance.forgetDevice(dev.id);
-          } catch (e) {
-            debugPrint('Failed to kick device ${dev.id}: $e');
+            return await ApiClient.instance.getDevices();
+          } catch (_) {
+            // Если refetch упал — показываем top-3 из original'а.
+            return DeviceListResult(
+              devices: d.devices.take(_deviceLimit).toList(),
+              limit: _deviceLimit,
+            );
           }
         }
-        // Refetch чтобы UI показал актуальный список (3 шт).
-        try {
-          final fresh = await ApiClient.instance.getDevices();
-          if (!mounted) return;
-          setState(() => _deviceList = fresh);
-        } catch (_) {
-          // Если refetch упал — показываем top-3 из original'а.
-          if (!mounted) return;
-          setState(() => _deviceList = DeviceListResult(
-                devices: d.devices.take(_deviceLimit).toList(),
-                limit: _deviceLimit,
-              ));
-        }
-        return;
-      }
-      setState(() => _deviceList = d);
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      if (e.statusCode != 401) {
-        debugPrint('Failed to load devices: ${e.message}');
-      }
-    }
+        return d;
+      },
+      fallback: const DeviceListResult(
+        devices: <DeviceSession>[],
+        limit: _deviceLimit,
+      ),
+      timeout: _optionalSectionTimeout,
+      onError: (error, _) {
+        if (!mounted) return;
+        if (error is ApiException && error.statusCode == 401) return;
+        debugPrint('Failed to load devices: $error');
+      },
+    );
+    if (!mounted) return;
+    setState(() => _deviceList = d);
   }
 
   Future<void> _loadReferral() async {
@@ -153,7 +194,8 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     }
   }
 
-  String get _email => (_me?['email'] as String?) ?? 'you@pyrita.com';
+  String get _email =>
+      (_me?['email'] as String?) ?? _cachedEmail ?? 'Аккаунт Pyrita';
   String get _firstInitial =>
       _email.isNotEmpty ? _email.substring(0, 1).toUpperCase() : 'A';
   String get _displayName {
@@ -173,19 +215,46 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     // (backend ставит effective_tier='pro' для VPN-config, но "ваш план"
     // всё ещё Free).
     final tier = _me?['tier'] as String?;
-    final tierName = switch (tier) {
-      'pro' => 'Pyrita Pro',
-      'max' => 'Pyrita Max',
-      'free' => 'Pyrita Free',
-      _ => 'Pyrita',
+    final effectiveTier = _me?['effective_tier'] as String?;
+    final visualTier = switch (effectiveTier) {
+      'pro' || 'max' => effectiveTier,
+      _ => tier,
     };
+    final tierName = _tierName(visualTier);
+
+    if (_me == null) {
+      return (
+        title: 'Pyrita',
+        hint: _meAttemptFinished ? 'Не удалось обновить план' : 'Загружаем…',
+        pct: 0,
+      );
+    }
 
     final status = _me?['subscription_status'];
     if (status is! Map) {
-      return (title: tierName, hint: 'Загружаем…', pct: 0);
+      final trialEndsAt = (_me?['trial_ends_at'] as num?)?.toInt();
+      if (trialEndsAt != null) {
+        final millisLeft = trialEndsAt - DateTime.now().millisecondsSinceEpoch;
+        if (millisLeft > 0) {
+          final daysLeft = (millisLeft / Duration.millisecondsPerDay).ceil();
+          return (
+            title: 'Pyrita Pro',
+            hint: 'Пробный · $daysLeft ${_dayWord(daysLeft)}',
+            pct: (daysLeft / 7).clamp(0.0, 1.0),
+          );
+        }
+      }
+      if (visualTier == 'pro' || visualTier == 'max') {
+        return (title: tierName, hint: 'План активен', pct: 1);
+      }
+      return (
+        title: tierName,
+        hint: visualTier == 'free' ? 'Бесплатный план' : 'План доступен',
+        pct: 0,
+      );
     }
     final kind = status['kind'] as String?;
-    final daysLeft = status['days_left'] as int?;
+    final daysLeft = (status['days_left'] as num?)?.toInt();
 
     if (kind == 'paid' && daysLeft != null) {
       final hint = 'Активен ещё $daysLeft ${_dayWord(daysLeft)}';
@@ -204,9 +273,18 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     // Expired / free — показываем tier name + CTA hint.
     return (
       title: tierName,
-      hint: tier == 'free' ? 'Бесплатный план' : 'Подписка истекла',
+      hint: visualTier == 'free' ? 'Бесплатный план' : 'Подписка истекла',
       pct: 0,
     );
+  }
+
+  String _tierName(String? tier) {
+    return switch (tier) {
+      'pro' => 'Pyrita Pro',
+      'max' => 'Pyrita Max',
+      'free' => 'Pyrita Free',
+      _ => 'Pyrita',
+    };
   }
 
   String _dayWord(int days) {
@@ -235,8 +313,11 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                       initial: _firstInitial,
                       name: _displayName,
                       email: _email,
-                      status: _me?['subscription_status'] as Map<String, dynamic>?,
+                      status:
+                          _me?['subscription_status'] as Map<String, dynamic>?,
                       tier: _me?['tier'] as String?,
+                      effectiveTier: _me?['effective_tier'] as String?,
+                      isLoadingStatus: _me == null && !_meAttemptFinished,
                     ),
                     const SizedBox(height: PyDS.sp4 + 2),
                     Padding(
@@ -246,17 +327,15 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                         info: _planInfo,
                         onRenew: () => context.push('/checkout'),
                         onChange: () => context.push('/checkout'),
-                        renewLabel:
-                            isGooglePlayBuild ? 'Тарифы' : 'Продлить',
-                        changeLabel: isGooglePlayBuild
-                            ? 'Что входит'
-                            : 'Сменить план',
+                        renewLabel: isGooglePlayBuild ? 'Тарифы' : 'Продлить',
+                        changeLabel:
+                            isGooglePlayBuild ? 'Что входит' : 'Сменить план',
                       ),
                     ),
                     const _SectionTitle('Использование'),
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: PyDS.sp4 + 2),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
                       child: _UsageRow(stats: _stats),
                     ),
                     _SectionTitle(
@@ -269,20 +348,20 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
                           : null,
                     ),
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: PyDS.sp4 + 2),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
                       child: _DevicesList(list: _deviceList),
                     ),
                     const SizedBox(height: PyDS.sp4 + 2),
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: PyDS.sp4 + 2),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
                       child: _ReferralCard(data: _referral),
                     ),
                     const _SectionTitle('История платежей'),
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: PyDS.sp4 + 2),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: PyDS.sp4 + 2),
                       child: _PaymentsList(payments: _payments),
                     ),
                     const SizedBox(height: PyDS.sp4),
@@ -328,6 +407,8 @@ class _ProfileHead extends StatelessWidget {
     required this.email,
     required this.status,
     required this.tier,
+    required this.effectiveTier,
+    required this.isLoadingStatus,
   });
 
   final String initial;
@@ -341,6 +422,8 @@ class _ProfileHead extends StatelessWidget {
   /// `me.tier` raw — 'free' / 'pro' / 'max'. null пока загружается.
   /// Badge показывает tier-specific label (PRO N ДН / MAX N ДН).
   final String? tier;
+  final String? effectiveTier;
+  final bool isLoadingStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -434,7 +517,12 @@ class _ProfileHead extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                _StatusBadge(status: status, tier: tier),
+                _StatusBadge(
+                  status: status,
+                  tier: tier,
+                  effectiveTier: effectiveTier,
+                  isLoading: isLoadingStatus,
+                ),
               ],
             ),
           ),
@@ -453,10 +541,17 @@ class _ProfileHead extends StatelessWidget {
 ///   free (no status)  → серый «FREE»
 ///   null              → серый «…» (placeholder пока грузим)
 class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.status, required this.tier});
+  const _StatusBadge({
+    required this.status,
+    required this.tier,
+    required this.effectiveTier,
+    required this.isLoading,
+  });
 
   final Map<String, dynamic>? status;
   final String? tier;
+  final String? effectiveTier;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -467,10 +562,24 @@ class _StatusBadge extends StatelessWidget {
     Color border;
     IconData? icon;
 
-    if (s == null) {
+    if (s == null && isLoading) {
       label = '…';
       bg = PyDS.bg2;
       fg = PyDS.textFaint;
+      border = PyDS.stroke;
+    } else if (s == null) {
+      final fallbackTier = switch (effectiveTier) {
+        'pro' || 'max' => effectiveTier,
+        _ => tier,
+      };
+      label = switch (fallbackTier) {
+        'pro' => 'PRO',
+        'max' => 'MAX',
+        'free' => 'FREE',
+        _ => 'PYRITA',
+      };
+      bg = PyDS.bg2;
+      fg = PyDS.textMute;
       border = PyDS.stroke;
     } else {
       final kind = s['kind'] as String?;
@@ -1201,7 +1310,9 @@ class _DevicesList extends StatelessWidget {
     if (l.contains('mac')) return Icons.laptop_mac_outlined;
     if (l.contains('windows')) return Icons.laptop_windows_outlined;
     if (l.contains('linux')) return Icons.laptop_outlined;
-    if (l.contains('hiddify') || l.contains('sing-box') || l.contains('clash')) {
+    if (l.contains('hiddify') ||
+        l.contains('sing-box') ||
+        l.contains('clash')) {
       return Icons.vpn_lock_outlined;
     }
     return Icons.public;
@@ -1276,19 +1387,19 @@ class _UsageRow extends StatelessWidget {
     // Трафик
     final trafficUsed = s?.trafficUsedGb;
     final trafficLimit = s?.trafficLimitGb;
-    final trafficValue = trafficUsed != null
-        ? trafficUsed.toStringAsFixed(1)
-        : '—';
-    final trafficHint = trafficUsed == null
+    final trafficValue =
+        trafficUsed != null ? trafficUsed.toStringAsFixed(1) : '—';
+    final trafficHint = s == null
         ? 'загрузка…'
-        : (trafficLimit != null
-            ? 'из ${trafficLimit.toStringAsFixed(0)} GB'
-            : 'без лимита');
-    final trafficPct = (trafficUsed != null &&
-            trafficLimit != null &&
-            trafficLimit > 0)
-        ? (trafficUsed / trafficLimit).clamp(0.0, 1.0)
-        : 0.0;
+        : (trafficUsed == null
+            ? 'появится скоро'
+            : (trafficLimit != null
+                ? 'из ${trafficLimit.toStringAsFixed(0)} GB'
+                : 'без лимита'));
+    final trafficPct =
+        (trafficUsed != null && trafficLimit != null && trafficLimit > 0)
+            ? (trafficUsed / trafficLimit).clamp(0.0, 1.0)
+            : 0.0;
 
     // Онлайн — TODO Phase C (sing-box stats)
     final onlineValue = s?.onlineHours?.toString() ?? '—';
@@ -1391,8 +1502,9 @@ class _PaymentsList extends StatelessWidget {
             .format(DateTime.fromMillisecondsSinceEpoch(rec.paidAt));
         final plan = _planLabels[rec.planId] ?? 'Pyrita · ${rec.planId}';
         // Формат суммы «₽2 690» — пробел-разделитель тысяч.
-        final amount = '₽${NumberFormat('#,##0', 'ru_RU').format(rec.amountRub)}'
-            .replaceAll(' ', ' ');
+        final amount =
+            '₽${NumberFormat('#,##0', 'ru_RU').format(rec.amountRub)}'
+                .replaceAll(' ', ' ');
         return _PaymentRow(date: date, plan: plan, amount: amount);
       }).toList(),
     );
