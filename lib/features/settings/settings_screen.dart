@@ -224,7 +224,7 @@ class _SectionTitle extends StatelessWidget {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Обновление — in-app update flow через GitHub Releases.
+// Обновление — in-app update flow через Pyrita release endpoint.
 // ──────────────────────────────────────────────────────────────────────
 
 class _UpdateCard extends StatefulWidget {
@@ -315,10 +315,9 @@ class _UpdateCardState extends State<_UpdateCard> {
     }
   }
 
-  /// Fallback на browser: открывает GitHub release page в системном
+  /// Fallback на browser: открывает Pyrita download page в системном
   /// Chrome. Юзер сам скачивает APK + open'ет → Android installer.
-  /// Работает когда in-app download fails (например RKN блочит
-  /// `release-assets.githubusercontent.com` S3-CDN).
+  /// Работает когда in-app download fails.
   Future<void> _openInBrowser() async {
     final info = _info;
     if (info == null) return;
@@ -536,7 +535,7 @@ class _UpdateCardState extends State<_UpdateCard> {
               fontSize: 13,
               color: PyDS.goldLight,
             ),
-            // Fallback: открыть GitHub release в браузере, если есть
+            // Fallback: открыть страницу скачивания в браузере, если есть
             // последний known info (даже если последний download failed).
             if (info?.releaseUrl.isNotEmpty == true) ...[
               const SizedBox(height: PyDS.sp1),

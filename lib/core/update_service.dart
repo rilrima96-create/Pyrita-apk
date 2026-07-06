@@ -44,7 +44,7 @@ class UpdateInfo {
   /// Original tag_name (e.g. 'v0.1.0') — для display.
   final String tagName;
 
-  /// HTML URL release-страницы на GitHub. Fallback если download fails.
+  /// HTML URL страницы скачивания. Fallback если download fails.
   final String releaseUrl;
 
   /// Direct download URL для arm64 APK.
@@ -92,9 +92,10 @@ class UpdateProgress {
 /// Сервис проверки и установки обновлений приложения.
 ///
 /// Логика:
-///   1. `checkForUpdate()` — GET https://api.github.com/repos/.../releases/latest
-///      без аутентификации (60 req/hour на IP — OK для редкого checking).
-///      Распарсить tag_name, найти `app-arm64-v8a-release.apk` asset.
+///   1. `checkForUpdate()` — GET https://api.pyrita.com/api/release/latest.
+///      Это self-hosted release endpoint на Pyrita, совместимый с subset'ом
+///      GitHub Releases API. Распарсить tag_name, найти
+///      `app-arm64-v8a-release.apk` asset.
 ///   2. `downloadApk(info, onProgress)` — Dio download в getExternalCacheDir()
 ///      (внешний кэш auto-cleanup'ится Android'ом, и FileProvider может
 ///      его читать).
@@ -103,7 +104,7 @@ class UpdateProgress {
 ///      видит system installer.
 ///
 /// Замечания:
-///   - Debug APK (current dev cycle) и Release APK (с GitHub) имеют
+///   - Debug APK (current dev cycle) и Release APK (из CI release) имеют
 ///     разные signing keys → install fails с INSTALL_FAILED_UPDATE_
 ///     INCOMPATIBLE. UI должен warn'ить юзера если он на debug-сборке.
 ///   - Android 8+ требует юзер'а grant'нуть REQUEST_INSTALL_PACKAGES
@@ -113,69 +114,99 @@ class UpdateService {
   UpdateService._();
   static final instance = UpdateService._();
 
-  static const _githubReleaseUrl =
+  @visibleForTesting
+  static const releaseEndpoint = 'https://api.pyrita.com/api/release/latest';
+
+  static const _githubFallbackReleaseEndpoint =
       'https://api.github.com/repos/rilrima96-create/Pyrita-apk/releases/latest';
+
+  static const _releaseEndpoints = [
+    releaseEndpoint,
+    _githubFallbackReleaseEndpoint,
+  ];
 
   /// Имя ABI-specific APK asset, который мы качаем. Соответствует
   /// `flutter build apk --split-per-abi` output. arm64-v8a покрывает
   /// 99% Android 10+ devices. Если нужен fallback на armeabi-v7a —
   /// меняем эту константу.
-  static const _targetAbiAsset = 'app-arm64-v8a-release.apk';
+  @visibleForTesting
+  static const targetAbiAsset = 'app-arm64-v8a-release.apk';
 
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 10),
     receiveTimeout: const Duration(seconds: 30),
     headers: {
-      'Accept': 'application/vnd.github+json',
+      'Accept': 'application/json',
       'User-Agent': 'Pyrita-app/update-check',
     },
   ));
 
-  /// Проверяет наличие нового release. Возвращает `null` если
-  /// сетевая ошибка или если current >= latest (no update).
+  @visibleForTesting
+  static UpdateInfo? parseReleasePayload({
+    required String currentVersion,
+    required Map<String, dynamic> data,
+  }) {
+    final tagName = data['tag_name'] as String? ?? '';
+    final latestVersion = tagName.startsWith('v') ? tagName.substring(1) : tagName;
+    final releaseUrl = data['html_url'] as String? ?? '';
+    final body = data['body'] as String? ?? '';
+
+    final assets = (data['assets'] as List?) ?? const [];
+    Map<dynamic, dynamic>? asset;
+    for (final candidate in assets) {
+      if (candidate is Map && candidate['name'] == targetAbiAsset) {
+        asset = candidate;
+        break;
+      }
+    }
+    if (asset == null) {
+      _log('[Update] no $targetAbiAsset asset in release $tagName');
+      return null;
+    }
+    final assetUrl = asset['browser_download_url'] as String? ?? '';
+    final assetSize = (asset['size'] as num?)?.toInt() ?? 0;
+    if (tagName.isEmpty || assetUrl.isEmpty) return null;
+
+    return UpdateInfo(
+      currentVersion: currentVersion,
+      latestVersion: latestVersion,
+      tagName: tagName,
+      releaseUrl: releaseUrl,
+      assetUrl: assetUrl,
+      assetSizeBytes: assetSize,
+      releaseNotes: body,
+    );
+  }
+
+  /// Проверяет latest release. Возвращает `null` если сетевая ошибка
+  /// или release payload не содержит нужный APK asset.
   Future<UpdateInfo?> checkForUpdate() async {
     try {
       final pkg = await PackageInfo.fromPlatform();
       final currentVersion = pkg.version;
 
-      final resp = await _dio.get<Map<String, dynamic>>(_githubReleaseUrl);
-      final data = resp.data;
-      if (data == null) return null;
+      for (final endpoint in _releaseEndpoints) {
+        try {
+          final resp = await _dio.get<Map<String, dynamic>>(endpoint);
+          final data = resp.data;
+          if (data == null) continue;
 
-      final tagName = data['tag_name'] as String? ?? '';
-      final latestVersion = tagName.startsWith('v')
-          ? tagName.substring(1)
-          : tagName;
-      final releaseUrl = data['html_url'] as String? ?? '';
-      final body = data['body'] as String? ?? '';
+          final info = parseReleasePayload(
+            currentVersion: currentVersion,
+            data: data,
+          );
+          if (info == null) continue;
 
-      final assets = (data['assets'] as List?) ?? const [];
-      final asset = assets.firstWhere(
-        (a) => a is Map && a['name'] == _targetAbiAsset,
-        orElse: () => null,
-      );
-      if (asset == null) {
-        _log('[Update] no $_targetAbiAsset asset in release $tagName');
-        return null;
+          _log(
+            '[Update] endpoint=$endpoint current=$currentVersion '
+            'latest=${info.latestVersion} hasUpdate=${info.hasUpdate}',
+          );
+          return info;
+        } on DioException catch (e) {
+          _log('[Update] check failed at $endpoint: ${e.message}');
+        }
       }
-      final assetUrl = asset['browser_download_url'] as String? ?? '';
-      final assetSize = (asset['size'] as int?) ?? 0;
-      if (assetUrl.isEmpty) return null;
-
-      final info = UpdateInfo(
-        currentVersion: currentVersion,
-        latestVersion: latestVersion,
-        tagName: tagName,
-        releaseUrl: releaseUrl,
-        assetUrl: assetUrl,
-        assetSizeBytes: assetSize,
-        releaseNotes: body,
-      );
-      _log(
-        '[Update] current=$currentVersion latest=$latestVersion '
-        'hasUpdate=${info.hasUpdate}',
-      );
-      return info;
+      return null;
     } on DioException catch (e) {
       _log('[Update] check failed: ${e.message}');
       return null;
@@ -243,19 +274,17 @@ class UpdateService {
         } catch (_) {}
       }
       // Human-readable error чтобы юзер понял что это не «нет интернета».
-      // В РФ RKN иногда блочит releases-assets.githubusercontent.com
-      // (S3-CDN) пока api.github.com работает.
       final reason = switch (e.type) {
         DioExceptionType.connectionTimeout ||
         DioExceptionType.connectionError =>
-          'Не удаётся скачать APK с GitHub (возможно блок RKN). '
-              'Попробуйте через VPN или через браузер.',
+          'Не удаётся скачать APK с сервера Pyrita. '
+              'Попробуйте ещё раз или откройте страницу скачивания в браузере.',
         DioExceptionType.receiveTimeout =>
           'Соединение оборвалось во время скачивания. Попробуйте ещё раз.',
         DioExceptionType.badCertificate =>
-          'Ошибка SSL-сертификата GitHub. Проверьте дату на телефоне.',
+          'Ошибка SSL-сертификата. Проверьте дату на телефоне.',
         DioExceptionType.badResponse =>
-          'GitHub вернул ошибку ${e.response?.statusCode}.',
+          'Сервер обновлений вернул ошибку ${e.response?.statusCode}.',
         _ => 'Сеть: ${e.message ?? "неизвестная ошибка"}',
       };
       throw StateError(reason);

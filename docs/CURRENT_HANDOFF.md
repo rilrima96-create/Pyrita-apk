@@ -2,6 +2,20 @@
 
 Last updated: 2026-07-07 local time.
 
+## Android release candidate `0.1.32+2042`
+
+- Source version is bumped to `0.1.32+2042`.
+- In-app updates now check `https://api.pyrita.com/api/release/latest` first.
+- The expected direct APK asset is `app-arm64-v8a-release.apk`.
+- GitHub Releases API is retained only as a fallback if the Pyrita endpoint is
+  unavailable.
+- Release workflow can mirror signed direct APKs to the Pyrita web server when
+  the `PYRITA_RELEASE_SSH_*` GitHub Actions secrets are configured.
+- Local checks passed: `flutter test test/update_service_test.dart` and
+  `flutter analyze`.
+- Do not install the local debug app over `com.pyrita.pyrita_app`. The user
+  needs a signed release APK from CI/tag `v0.1.32` or the same release key.
+
 ## Android app state
 
 - Debug builds install side by side as `Pyrita QA` (`com.pyrita.pyrita_app.debug`).

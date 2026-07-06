@@ -3,6 +3,7 @@ name: Build Android APK
 # Триггеры:
 #   * push в main или любую feature-ветку → сборка debug-APK
 #   * tag v*.*.* → сборка release-APK (требует SIGNING_* secrets — см. ниже)
+#     и публикация APK на pyrita.com, если настроены PYRITA_RELEASE_SSH_* secrets
 #   * manual через "Run workflow" в GitHub Actions UI
 
 on:
@@ -86,6 +87,16 @@ jobs:
     name: Build release APK
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    env:
+      SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+      SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+      SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+      SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+      PYRITA_RELEASE_SSH_HOST: ${{ secrets.PYRITA_RELEASE_SSH_HOST }}
+      PYRITA_RELEASE_SSH_USER: ${{ secrets.PYRITA_RELEASE_SSH_USER }}
+      PYRITA_RELEASE_SSH_PORT: ${{ secrets.PYRITA_RELEASE_SSH_PORT }}
+      PYRITA_RELEASE_SSH_KEY: ${{ secrets.PYRITA_RELEASE_SSH_KEY }}
+      PYRITA_RELEASES_DIR: ${{ secrets.PYRITA_RELEASES_DIR }}
 
     # GITHUB_TOKEN по умолчанию read-only с 2023 года; для создания
     # GitHub Release через softprops/action-gh-release@v2 нужен contents:write.
@@ -116,19 +127,23 @@ jobs:
       - name: Generate launcher icons
         run: dart run flutter_launcher_icons
 
+      - name: Validate release signing secrets
+        run: |
+          test -n "$SIGNING_KEYSTORE_BASE64" || (echo "SIGNING_KEYSTORE_BASE64 is missing" >&2; exit 1)
+          test -n "$SIGNING_STORE_PASSWORD" || (echo "SIGNING_STORE_PASSWORD is missing" >&2; exit 1)
+          test -n "$SIGNING_KEY_ALIAS" || (echo "SIGNING_KEY_ALIAS is missing" >&2; exit 1)
+          test -n "$SIGNING_KEY_PASSWORD" || (echo "SIGNING_KEY_PASSWORD is missing" >&2; exit 1)
+
       - name: Decode keystore
         # SIGNING_KEYSTORE_BASE64 — keystore.jks в base64 (создаётся локально:
         # base64 -i keystore.jks | clip). Хранится в GitHub Secrets.
-        if: ${{ env.SIGNING_KEYSTORE_BASE64 != '' }}
-        env:
-          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
         run: |
           echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > android/app/keystore.jks
           cat > android/key.properties <<EOF
           storeFile=keystore.jks
-          storePassword=${{ secrets.SIGNING_STORE_PASSWORD }}
-          keyAlias=${{ secrets.SIGNING_KEY_ALIAS }}
-          keyPassword=${{ secrets.SIGNING_KEY_PASSWORD }}
+          storePassword=$SIGNING_STORE_PASSWORD
+          keyAlias=$SIGNING_KEY_ALIAS
+          keyPassword=$SIGNING_KEY_PASSWORD
           EOF
 
       - name: Ensure platform scaffolding
@@ -166,8 +181,87 @@ jobs:
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
+          generate_release_notes: true
           files: |
             build/direct/app-*-release.apk
             build/play/pyrita-google-play-release.aab
             build/play/pyrita-google-play-arm64-v8a-release.apk
           fail_on_unmatched_files: true
+
+      - name: Publish direct APKs to pyrita.com release mirror
+        if: ${{ env.PYRITA_RELEASE_SSH_HOST != '' && env.PYRITA_RELEASE_SSH_USER != '' && env.PYRITA_RELEASE_SSH_KEY != '' }}
+        run: |
+          set -euo pipefail
+
+          RELEASE_TAG="${GITHUB_REF_NAME}"
+          RELEASES_DIR="${PYRITA_RELEASES_DIR:-/home/ubuntuuser/pyrita-releases}"
+          SSH_PORT="${PYRITA_RELEASE_SSH_PORT:-22}"
+          SSH_TARGET="${PYRITA_RELEASE_SSH_USER}@${PYRITA_RELEASE_SSH_HOST}"
+
+          mkdir -p ~/.ssh build/release-mirror
+          printf '%s\n' "$PYRITA_RELEASE_SSH_KEY" > ~/.ssh/pyrita_release
+          chmod 600 ~/.ssh/pyrita_release
+          ssh-keyscan -p "$SSH_PORT" "$PYRITA_RELEASE_SSH_HOST" >> ~/.ssh/known_hosts
+
+          git log -1 --pretty=%B > build/release-mirror/notes.txt
+          cat > build/release-mirror/update-manifest.js <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+
+          const releasesDir = process.env.RELEASES_DIR;
+          const tag = process.env.RELEASE_TAG;
+          const releaseDir = path.join(releasesDir, tag);
+          const notesPath = path.join(releaseDir, 'notes.txt');
+          const manifestPath = path.join(releasesDir, 'manifest.json');
+          const files = {
+            'arm64-v8a': 'app-arm64-v8a-release.apk',
+            'armeabi-v7a': 'app-armeabi-v7a-release.apk',
+            'x86_64': 'app-x86_64-release.apk',
+          };
+
+          const assets = {};
+          for (const [abi, file] of Object.entries(files)) {
+            const filePath = path.join(releaseDir, file);
+            const stat = fs.statSync(filePath);
+            assets[abi] = {
+              url: '/api/release/file/' + encodeURIComponent(tag) + '/' + encodeURIComponent(file),
+              size: stat.size,
+            };
+          }
+
+          let previous = { history: [] };
+          try {
+            previous = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          } catch {}
+
+          const latest = {
+            tag,
+            publishedAt: new Date().toISOString(),
+            notes: fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8').trim() : '',
+            assets,
+          };
+          const history = [previous.latest, ...(previous.history || [])]
+            .filter((release) => release && release.tag && release.tag !== tag)
+            .slice(0, 2);
+
+          fs.mkdirSync(releasesDir, { recursive: true });
+          fs.writeFileSync(manifestPath, JSON.stringify({ latest, history }, null, 2) + '\n');
+
+          const keep = new Set([tag, ...history.map((release) => release.tag)]);
+          for (const entry of fs.readdirSync(releasesDir, { withFileTypes: true })) {
+            if (entry.isDirectory() && entry.name.startsWith('v') && !keep.has(entry.name)) {
+              fs.rmSync(path.join(releasesDir, entry.name), { recursive: true, force: true });
+            }
+          }
+          NODE
+
+          ssh -p "$SSH_PORT" -i ~/.ssh/pyrita_release "$SSH_TARGET" \
+            "mkdir -p '$RELEASES_DIR/$RELEASE_TAG'"
+          scp -P "$SSH_PORT" -i ~/.ssh/pyrita_release \
+            build/direct/app-*-release.apk \
+            build/release-mirror/notes.txt \
+            build/release-mirror/update-manifest.js \
+            "$SSH_TARGET:$RELEASES_DIR/$RELEASE_TAG/"
+
+          ssh -p "$SSH_PORT" -i ~/.ssh/pyrita_release "$SSH_TARGET" \
+            "RELEASES_DIR='$RELEASES_DIR' RELEASE_TAG='$RELEASE_TAG' node '$RELEASES_DIR/$RELEASE_TAG/update-manifest.js' && rm -f '$RELEASES_DIR/$RELEASE_TAG/update-manifest.js'"

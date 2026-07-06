@@ -5,7 +5,7 @@ publish_to: "none"
 # package versioning: <semantic>+<build>
 # Bump <build> (целое число) каждый Android-release — Play и RuStore
 # отказывают APK'у с тем же versionCode что уже опубликован.
-version: 0.1.31+2041
+version: 0.1.32+2042
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -67,8 +67,8 @@ dependencies:
   # VPN работает.
   permission_handler: ^11.3.0
 
-  # Phase D: in-app update checker (GitHub Releases). Читает текущую
-  # version из pubspec, сравнивает с tag_name latest release'а.
+  # Phase D: in-app update checker. Читает текущую version из pubspec,
+  # сравнивает с tag_name latest release'а на api.pyrita.com.
   package_info_plus: ^8.0.0
 
   # Phase D: open_filex был использован для APK install но silent-fail'ил
