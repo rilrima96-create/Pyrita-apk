@@ -131,4 +131,42 @@ void main() {
       'outboundTag': 'direct',
     });
   });
+
+  test('HTTP proxy edge config routes TCP through proxy and drops UDP', () {
+    final config = buildHttpProxyXrayConfigMap(
+      host: '162.120.17.14',
+      port: 18088,
+      username: 'px_0123456789abcdef_1790000000000',
+      password: 'signed-password',
+      locationId: 'us',
+      ruDomainsBypass: const ['domain:sberbank.ru'],
+    );
+
+    final inbound = (config['inbounds'] as List).first as Map;
+    final outbounds = config['outbounds'] as List;
+    final proxyOutbound =
+        outbounds.cast<Map>().singleWhere((item) => item['tag'] == 'proxy');
+    final settings = proxyOutbound['settings'] as Map;
+    final server = (settings['servers'] as List).first as Map;
+    final user = (server['users'] as List).first as Map;
+    final routing = config['routing'] as Map;
+    final rules = routing['rules'] as List;
+
+    expect(inbound['port'], 10808);
+    expect(proxyOutbound['protocol'], 'http');
+    expect(server['address'], '162.120.17.14');
+    expect(server['port'], 18088);
+    expect(user['user'], startsWith('px_'));
+    expect(rules.first, {
+      'type': 'field',
+      'network': 'tcp,udp',
+      'port': '53',
+      'outboundTag': 'direct',
+    });
+    expect(rules.last, {
+      'type': 'field',
+      'network': 'udp',
+      'outboundTag': 'blackhole',
+    });
+  });
 }

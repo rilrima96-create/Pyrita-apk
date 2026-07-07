@@ -82,6 +82,33 @@ class ApiClient {
     }
   }
 
+  /// GET /api/me/proxy-config. Возвращает short-lived credentials для
+  /// browser-proxy edge, но авторизация идёт обычной app session-cookie.
+  Future<Map<String, dynamic>> getProxyConfig({String? locationId}) async {
+    try {
+      final res = await _dio.get(
+        "/api/me/proxy-config",
+        queryParameters: {
+          if (locationId != null && locationId.trim().isNotEmpty)
+            "location": locationId.trim(),
+        },
+      );
+      if (res.statusCode == 200 && res.data is Map) {
+        return Map<String, dynamic>.from(res.data as Map);
+      }
+      final body = res.data;
+      final errorMsg = (body is Map && body["error"] is String)
+          ? body["error"] as String
+          : null;
+      throw ApiException(
+        statusCode: res.statusCode ?? -1,
+        message: errorMsg ?? "Не удалось получить прокси-сервер",
+      );
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
   /// POST /api/logout. Серверная сессия завершается + клиентский session
   /// cookie очищается. Возвращает true даже на ошибку (от юзера точка
   /// зрения — он "вышел").

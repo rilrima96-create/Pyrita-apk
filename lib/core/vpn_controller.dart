@@ -258,6 +258,101 @@ Map<String, dynamic> buildHysteria2XrayConfigMap(String url) {
 }
 
 @visibleForTesting
+Map<String, dynamic> buildHttpProxyXrayConfigMap({
+  required String host,
+  required int port,
+  required String username,
+  required String password,
+  required String locationId,
+  required List<String> ruDomainsBypass,
+  String scheme = 'http',
+}) {
+  final normalizedScheme = scheme.trim().toLowerCase();
+  final normalizedHost = host.trim().toLowerCase();
+  final normalizedUsername = username.trim();
+  final normalizedPassword = password.trim();
+
+  if (normalizedScheme != 'http') {
+    throw StateError('Неподдерживаемая схема прокси: $scheme');
+  }
+  if (normalizedHost.isEmpty || port < 1 || port > 65535) {
+    throw StateError('Прокси-сервер передан неполностью');
+  }
+  if (normalizedUsername.isEmpty || normalizedPassword.isEmpty) {
+    throw StateError('Прокси-сервер не выдал авторизацию');
+  }
+
+  final rules = buildVpnRoutingRules(
+    primaryUrl: 'http-proxy://$normalizedHost:$port#$locationId',
+    ruDomainsBypass: ruDomainsBypass,
+  );
+  rules.add({
+    'type': 'field',
+    'network': 'udp',
+    'outboundTag': 'blackhole',
+  });
+
+  return <String, dynamic>{
+    'log': {
+      'access': '',
+      'error': '',
+      'loglevel': 'debug',
+      'dnsLog': false,
+    },
+    'inbounds': [
+      {
+        'tag': 'in_proxy',
+        'port': 10808,
+        'protocol': 'socks',
+        'listen': '127.0.0.1',
+        'settings': {
+          'auth': 'noauth',
+          'udp': true,
+          'userLevel': 8,
+        },
+        'sniffing': {'enabled': false},
+      }
+    ],
+    'outbounds': [
+      {
+        'tag': 'proxy',
+        'protocol': 'http',
+        'settings': {
+          'servers': [
+            {
+              'address': normalizedHost,
+              'port': port,
+              'users': [
+                {
+                  'user': normalizedUsername,
+                  'pass': normalizedPassword,
+                }
+              ],
+            }
+          ],
+        },
+      },
+      {
+        'tag': 'direct',
+        'protocol': 'freedom',
+        'settings': {'domainStrategy': 'UseIp'},
+      },
+      {
+        'tag': 'blackhole',
+        'protocol': 'blackhole',
+        'settings': {},
+      },
+    ],
+    'dns': buildStableVpnDnsConfig(),
+    'routing': {
+      'domainStrategy': 'IPIfNonMatch',
+      'rules': rules,
+      'balancers': [],
+    },
+  };
+}
+
+@visibleForTesting
 void stripRemovedXraySettings(Map<String, dynamic> configMap) {
   void visit(Object? value) {
     if (value is Map) {
@@ -1227,6 +1322,95 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     return urls;
   }
 
+  String _proxyLocationIdForServer(String serverId) {
+    return switch (serverId) {
+      'us' => 'us',
+      _ => 'finland',
+    };
+  }
+
+  String _proxyServerIdForPreference(String serverId) {
+    return serverId == 'us' ? 'us' : defaultVpnServerId;
+  }
+
+  VpnServerProfile _proxyServerProfile(
+    String serverId,
+    List<VpnServerProfile> profiles,
+  ) {
+    for (final profile in profiles) {
+      if (profile.id == serverId) {
+        return VpnServerProfile(
+          id: profile.id,
+          name: profile.name,
+          countryCode: profile.countryCode,
+          protocolLabel: 'HTTP Proxy',
+          url: 'http-proxy://${_proxyLocationIdForServer(serverId)}',
+          supported: true,
+        );
+      }
+    }
+    return VpnServerProfile(
+      id: serverId,
+      name: vpnServerNameFor(serverId),
+      countryCode: vpnServerCountryCodeFor(serverId),
+      protocolLabel: 'HTTP Proxy',
+      url: 'http-proxy://${_proxyLocationIdForServer(serverId)}',
+      supported: true,
+    );
+  }
+
+  Future<_BuiltXrayConfig?> _tryBuildHttpProxyConfig(
+    String serverId,
+    List<VpnServerProfile> profiles,
+  ) async {
+    final locationId = _proxyLocationIdForServer(serverId);
+    try {
+      final data = await ApiClient.instance
+          .getProxyConfig(locationId: locationId)
+          .timeout(const Duration(seconds: 10));
+      final proxyValue = data['proxy'];
+      if (proxyValue is! Map) {
+        throw StateError('API не вернул proxy');
+      }
+      final proxy = Map<String, dynamic>.from(proxyValue);
+      final host = proxy['host'] as String?;
+      final username = proxy['username'] as String?;
+      final password = proxy['password'] as String?;
+      final scheme = (proxy['scheme'] as String?) ?? 'http';
+      final portValue = proxy['port'];
+      final port = portValue is int
+          ? portValue
+          : portValue is num
+              ? portValue.toInt()
+              : int.tryParse('${portValue ?? ''}');
+      if (host == null ||
+          username == null ||
+          password == null ||
+          port == null) {
+        throw StateError('API вернул неполный proxy');
+      }
+
+      final configMap = buildHttpProxyXrayConfigMap(
+        host: host,
+        port: port,
+        username: username,
+        password: password,
+        scheme: scheme,
+        locationId: locationId,
+        ruDomainsBypass: _ruDomainsBypass,
+      );
+
+      return _BuiltXrayConfig(
+        config: jsonEncode(configMap),
+        server: _proxyServerProfile(serverId, profiles),
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('[Pyrita-VPN] HTTP proxy route unavailable for $locationId: $e');
+      return null;
+    }
+  }
+
   /// Скачивает Pyrita sub URL, выбирает primary URL (с учётом
   /// `preferred_protocol`), строит JSON-config для Xray-core с включёнными
   /// правилами RU-bypass.
@@ -1234,6 +1418,16 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   /// Pyrita backend (Marzban) возвращает либо base64-encoded плоский
   /// список URL'ов (по одной строке), либо plain text. Поддерживаем оба.
   Future<_BuiltXrayConfig> _buildXrayConfig(String subUrl) async {
+    final preferredServer = _proxyServerIdForPreference(
+      await _getPreferredServer(),
+    );
+    final cachedProfiles = await _readServerProfilesCache();
+    final proxyBuilt = await _tryBuildHttpProxyConfig(
+      preferredServer,
+      cachedProfiles,
+    );
+    if (proxyBuilt != null) return proxyBuilt;
+
     final urls = await _fetchSubscriptionUrls(
       subUrl,
       includeUnsupported: true,
@@ -1243,7 +1437,6 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       await _rememberServerProfiles(profiles);
     }
 
-    final preferredServer = await _getPreferredServer();
     var selectedServerId = preferredServer;
     var serverUrls = supportedSubscriptionUrlsForServer(urls, selectedServerId);
 
