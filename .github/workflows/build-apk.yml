@@ -190,6 +190,7 @@ jobs:
 
       - name: Publish direct APKs to pyrita.com release mirror
         if: ${{ env.PYRITA_RELEASE_SSH_HOST != '' && env.PYRITA_RELEASE_SSH_USER != '' && env.PYRITA_RELEASE_SSH_KEY != '' }}
+        timeout-minutes: 4
         run: |
           set -euo pipefail
 
@@ -197,11 +198,17 @@ jobs:
           RELEASES_DIR="${PYRITA_RELEASES_DIR:-/home/ubuntuuser/pyrita-releases}"
           SSH_PORT="${PYRITA_RELEASE_SSH_PORT:-22}"
           SSH_TARGET="${PYRITA_RELEASE_SSH_USER}@${PYRITA_RELEASE_SSH_HOST}"
+          SSH_OPTS=(
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=10
+            -o ServerAliveCountMax=2
+          )
 
           mkdir -p ~/.ssh build/release-mirror
           printf '%s\n' "$PYRITA_RELEASE_SSH_KEY" > ~/.ssh/pyrita_release
           chmod 600 ~/.ssh/pyrita_release
-          ssh-keyscan -p "$SSH_PORT" "$PYRITA_RELEASE_SSH_HOST" >> ~/.ssh/known_hosts
+          timeout 20 ssh-keyscan -T 15 -p "$SSH_PORT" "$PYRITA_RELEASE_SSH_HOST" >> ~/.ssh/known_hosts
 
           git log -1 --pretty=%B > build/release-mirror/notes.txt
           cat > build/release-mirror/update-manifest.js <<'NODE'
@@ -255,13 +262,13 @@ jobs:
           }
           NODE
 
-          ssh -p "$SSH_PORT" -i ~/.ssh/pyrita_release "$SSH_TARGET" \
+          ssh -p "$SSH_PORT" -i ~/.ssh/pyrita_release "${SSH_OPTS[@]}" "$SSH_TARGET" \
             "mkdir -p '$RELEASES_DIR/$RELEASE_TAG'"
-          scp -P "$SSH_PORT" -i ~/.ssh/pyrita_release \
+          scp -P "$SSH_PORT" -i ~/.ssh/pyrita_release "${SSH_OPTS[@]}" \
             build/direct/app-*-release.apk \
             build/release-mirror/notes.txt \
             build/release-mirror/update-manifest.js \
             "$SSH_TARGET:$RELEASES_DIR/$RELEASE_TAG/"
 
-          ssh -p "$SSH_PORT" -i ~/.ssh/pyrita_release "$SSH_TARGET" \
+          ssh -p "$SSH_PORT" -i ~/.ssh/pyrita_release "${SSH_OPTS[@]}" "$SSH_TARGET" \
             "RELEASES_DIR='$RELEASES_DIR' RELEASE_TAG='$RELEASE_TAG' node '$RELEASES_DIR/$RELEASE_TAG/update-manifest.js' && rm -f '$RELEASES_DIR/$RELEASE_TAG/update-manifest.js'"
