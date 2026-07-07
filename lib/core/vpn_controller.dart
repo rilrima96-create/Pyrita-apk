@@ -723,12 +723,11 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
             '[Pyrita-VPN] ping returned $ms '
             '(failure $_consecutivePingFailures/3)',
           );
-          if (_consecutivePingFailures >= 3) {
-            unawaited(_stopWithTunnelFailure(
-              'VPN подключился, но интернет через туннель не отвечает. '
-              'Попробуйте другой сервер или перезапустите подключение.',
-            ));
-          }
+          state = state.copyWith(serverPingMs: null);
+          unawaited(PyritaNotificationService.instance.updatePing(
+            serverName: state.serverName,
+            pingMs: null,
+          ));
           return;
         }
         _consecutivePingFailures = 0;
@@ -760,7 +759,7 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     }
   }
 
-  Future<int> _waitForTunnelHealth() async {
+  Future<int?> _waitForTunnelHealth() async {
     for (var attempt = 1; attempt <= 3; attempt += 1) {
       final ms = await _measureTunnelDelay();
       if (ms > 0) return ms;
@@ -772,13 +771,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       }
     }
 
-    throw TimeoutException(
-      'VPN подключился, но интернет через туннель не отвечает. '
-      'Попробуйте другой сервер или сообщите в поддержку.',
-      const Duration(seconds: 30),
-    );
+    return null;
   }
 
+  // ignore: unused_element
   Future<void> _stopWithTunnelFailure(String message) async {
     if (_pendingTunnelFailureMessage != null) return;
     _pendingTunnelFailureMessage = message;
@@ -1062,17 +1058,7 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
         _connectedCompleter = null;
       }
 
-      final int initialPingMs;
-      try {
-        initialPingMs = await _waitForTunnelHealth();
-      } catch (e) {
-        await _stopWithTunnelFailure(
-          e is TimeoutException && e.message != null
-              ? e.message!
-              : 'VPN подключился, но интернет через туннель не отвечает.',
-        );
-        rethrow;
-      }
+      final initialPingMs = await _waitForTunnelHealth();
       if (!mounted || !state.isConnected) return;
       _consecutivePingFailures = 0;
       state = state.copyWith(serverPingMs: initialPingMs);
