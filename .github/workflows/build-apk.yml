@@ -188,9 +188,9 @@ jobs:
             build/play/pyrita-google-play-arm64-v8a-release.apk
           fail_on_unmatched_files: true
 
-      - name: Publish release manifest to pyrita.com updater
+      - name: Mirror release APKs to pyrita.com updater
         if: ${{ env.PYRITA_RELEASE_SSH_HOST != '' && env.PYRITA_RELEASE_SSH_USER != '' && env.PYRITA_RELEASE_SSH_KEY != '' }}
-        timeout-minutes: 2
+        timeout-minutes: 8
         run: |
           set -euo pipefail
 
@@ -224,8 +224,10 @@ jobs:
           }
           fs.writeFileSync('build/release-mirror/sizes.json', JSON.stringify(sizes, null, 2) + '\n');
           NODE
-          cat > build/release-mirror/update-manifest.js <<'NODE'
+          cat > build/release-mirror/publish-release.js <<'NODE'
           const fs = require('fs');
+          const http = require('http');
+          const https = require('https');
           const path = require('path');
 
           const releasesDir = process.env.RELEASES_DIR;
@@ -243,38 +245,131 @@ jobs:
           const sizes = JSON.parse(fs.readFileSync(sizesPath, 'utf8'));
           const githubBase = 'https://github.com/' + repository + '/releases/download/' + encodeURIComponent(tag);
 
-          const assets = {};
-          for (const [abi, file] of Object.entries(files)) {
-            assets[abi] = {
-              url: githubBase + '/' + encodeURIComponent(file),
-              size: sizes[abi],
-            };
+          function releaseFileUrl(file) {
+            return '/api/release/file/' + encodeURIComponent(tag) + '/' + encodeURIComponent(file);
           }
 
-          let previous = { history: [] };
-          try {
-            previous = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-          } catch {}
+          function sleep(ms) {
+            return new Promise((resolve) => setTimeout(resolve, ms));
+          }
 
-          const latest = {
-            tag,
-            publishedAt: new Date().toISOString(),
-            notes: fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8').trim() : '',
-            assets,
-          };
-          const history = [previous.latest, ...(previous.history || [])]
-            .filter((release) => release && release.tag && release.tag !== tag)
-            .slice(0, 2);
+          function downloadOnce(url, destination, redirects = 0) {
+            return new Promise((resolve, reject) => {
+              if (redirects > 8) {
+                reject(new Error('too many redirects'));
+                return;
+              }
 
-          fs.mkdirSync(releasesDir, { recursive: true });
-          fs.writeFileSync(manifestPath, JSON.stringify({ latest, history }, null, 2) + '\n');
+              const client = url.startsWith('https:') ? https : http;
+              const request = client.get(
+                url,
+                { headers: { 'User-Agent': 'Pyrita-release-mirror' } },
+                (response) => {
+                  const status = response.statusCode || 0;
+                  if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {
+                    response.resume();
+                    const nextUrl = new URL(response.headers.location, url).toString();
+                    resolve(downloadOnce(nextUrl, destination, redirects + 1));
+                    return;
+                  }
+                  if (status !== 200) {
+                    response.resume();
+                    reject(new Error('download failed with HTTP ' + status));
+                    return;
+                  }
 
-          const keep = new Set([tag, ...history.map((release) => release.tag)]);
-          for (const entry of fs.readdirSync(releasesDir, { withFileTypes: true })) {
-            if (entry.isDirectory() && entry.name.startsWith('v') && !keep.has(entry.name)) {
-              fs.rmSync(path.join(releasesDir, entry.name), { recursive: true, force: true });
+                  const output = fs.createWriteStream(destination);
+                  response.pipe(output);
+                  output.on('finish', () => output.close(resolve));
+                  output.on('error', reject);
+                },
+              );
+              request.setTimeout(300000, () => request.destroy(new Error('download timeout')));
+              request.on('error', reject);
+            });
+          }
+
+          async function mirrorAsset(file, expectedSize) {
+            const finalPath = path.join(releaseDir, file);
+            const tempPath = finalPath + '.tmp';
+            const url = githubBase + '/' + encodeURIComponent(file);
+
+            try {
+              if (fs.statSync(finalPath).size === expectedSize) {
+                console.log('Already mirrored ' + file);
+                return;
+              }
+            } catch {}
+
+            for (let attempt = 1; attempt <= 3; attempt += 1) {
+              try {
+                try {
+                  fs.unlinkSync(tempPath);
+                } catch {}
+                console.log('Mirroring ' + file + ' from GitHub, attempt ' + attempt);
+                await downloadOnce(url, tempPath);
+                const actualSize = fs.statSync(tempPath).size;
+                if (actualSize !== expectedSize) {
+                  throw new Error('size mismatch for ' + file + ': expected ' + expectedSize + ', got ' + actualSize);
+                }
+                fs.renameSync(tempPath, finalPath);
+                return;
+              } catch (error) {
+                try {
+                  fs.unlinkSync(tempPath);
+                } catch {}
+                if (attempt === 3) {
+                  throw error;
+                }
+                console.warn('Mirror attempt failed for ' + file + ': ' + error.message);
+                await sleep(attempt * 5000);
+              }
             }
           }
+
+          fs.mkdirSync(releaseDir, { recursive: true });
+
+          (async () => {
+            for (const [abi, file] of Object.entries(files)) {
+              await mirrorAsset(file, sizes[abi]);
+            }
+
+            const assets = {};
+            for (const [abi, file] of Object.entries(files)) {
+              assets[abi] = {
+                url: releaseFileUrl(file),
+                size: sizes[abi],
+              };
+            }
+
+            let previous = { history: [] };
+            try {
+              previous = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            } catch {}
+
+            const latest = {
+              tag,
+              publishedAt: new Date().toISOString(),
+              notes: fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8').trim() : '',
+              assets,
+            };
+            const history = [previous.latest, ...(previous.history || [])]
+              .filter((release) => release && release.tag && release.tag !== tag)
+              .slice(0, 2);
+
+            fs.mkdirSync(releasesDir, { recursive: true });
+            fs.writeFileSync(manifestPath, JSON.stringify({ latest, history }, null, 2) + '\n');
+
+            const keep = new Set([tag, ...history.map((release) => release.tag)]);
+            for (const entry of fs.readdirSync(releasesDir, { withFileTypes: true })) {
+              if (entry.isDirectory() && entry.name.startsWith('v') && !keep.has(entry.name)) {
+                fs.rmSync(path.join(releasesDir, entry.name), { recursive: true, force: true });
+              }
+            }
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
           NODE
 
           ssh -p "$SSH_PORT" -i ~/.ssh/pyrita_release "${SSH_OPTS[@]}" "$SSH_TARGET" \
@@ -282,8 +377,8 @@ jobs:
           scp -P "$SSH_PORT" -i ~/.ssh/pyrita_release "${SSH_OPTS[@]}" \
             build/release-mirror/notes.txt \
             build/release-mirror/sizes.json \
-            build/release-mirror/update-manifest.js \
+            build/release-mirror/publish-release.js \
             "$SSH_TARGET:$RELEASES_DIR/$RELEASE_TAG/"
 
           ssh -p "$SSH_PORT" -i ~/.ssh/pyrita_release "${SSH_OPTS[@]}" "$SSH_TARGET" \
-            "RELEASES_DIR='$RELEASES_DIR' RELEASE_TAG='$RELEASE_TAG' GITHUB_REPOSITORY='$GITHUB_REPOSITORY' node '$RELEASES_DIR/$RELEASE_TAG/update-manifest.js' && rm -f '$RELEASES_DIR/$RELEASE_TAG/update-manifest.js'"
+            "RELEASES_DIR='$RELEASES_DIR' RELEASE_TAG='$RELEASE_TAG' GITHUB_REPOSITORY='$GITHUB_REPOSITORY' node '$RELEASES_DIR/$RELEASE_TAG/publish-release.js' && rm -f '$RELEASES_DIR/$RELEASE_TAG/publish-release.js'"
