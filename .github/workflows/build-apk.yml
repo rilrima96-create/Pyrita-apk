@@ -188,9 +188,9 @@ jobs:
             build/play/pyrita-google-play-arm64-v8a-release.apk
           fail_on_unmatched_files: true
 
-      - name: Publish direct APKs to pyrita.com release mirror
+      - name: Publish release manifest to pyrita.com updater
         if: ${{ env.PYRITA_RELEASE_SSH_HOST != '' && env.PYRITA_RELEASE_SSH_USER != '' && env.PYRITA_RELEASE_SSH_KEY != '' }}
-        timeout-minutes: 4
+        timeout-minutes: 2
         run: |
           set -euo pipefail
 
@@ -211,28 +211,43 @@ jobs:
           timeout 20 ssh-keyscan -T 15 -p "$SSH_PORT" "$PYRITA_RELEASE_SSH_HOST" >> ~/.ssh/known_hosts
 
           git log -1 --pretty=%B > build/release-mirror/notes.txt
+          node <<'NODE'
+          const fs = require('fs');
+          const files = {
+            'arm64-v8a': 'build/direct/app-arm64-v8a-release.apk',
+            'armeabi-v7a': 'build/direct/app-armeabi-v7a-release.apk',
+            'x86_64': 'build/direct/app-x86_64-release.apk',
+          };
+          const sizes = {};
+          for (const [abi, file] of Object.entries(files)) {
+            sizes[abi] = fs.statSync(file).size;
+          }
+          fs.writeFileSync('build/release-mirror/sizes.json', JSON.stringify(sizes, null, 2) + '\n');
+          NODE
           cat > build/release-mirror/update-manifest.js <<'NODE'
           const fs = require('fs');
           const path = require('path');
 
           const releasesDir = process.env.RELEASES_DIR;
           const tag = process.env.RELEASE_TAG;
+          const repository = process.env.GITHUB_REPOSITORY;
           const releaseDir = path.join(releasesDir, tag);
           const notesPath = path.join(releaseDir, 'notes.txt');
+          const sizesPath = path.join(releaseDir, 'sizes.json');
           const manifestPath = path.join(releasesDir, 'manifest.json');
           const files = {
             'arm64-v8a': 'app-arm64-v8a-release.apk',
             'armeabi-v7a': 'app-armeabi-v7a-release.apk',
             'x86_64': 'app-x86_64-release.apk',
           };
+          const sizes = JSON.parse(fs.readFileSync(sizesPath, 'utf8'));
+          const githubBase = 'https://github.com/' + repository + '/releases/download/' + encodeURIComponent(tag);
 
           const assets = {};
           for (const [abi, file] of Object.entries(files)) {
-            const filePath = path.join(releaseDir, file);
-            const stat = fs.statSync(filePath);
             assets[abi] = {
-              url: '/api/release/file/' + encodeURIComponent(tag) + '/' + encodeURIComponent(file),
-              size: stat.size,
+              url: githubBase + '/' + encodeURIComponent(file),
+              size: sizes[abi],
             };
           }
 
@@ -265,10 +280,10 @@ jobs:
           ssh -p "$SSH_PORT" -i ~/.ssh/pyrita_release "${SSH_OPTS[@]}" "$SSH_TARGET" \
             "mkdir -p '$RELEASES_DIR/$RELEASE_TAG'"
           scp -P "$SSH_PORT" -i ~/.ssh/pyrita_release "${SSH_OPTS[@]}" \
-            build/direct/app-*-release.apk \
             build/release-mirror/notes.txt \
+            build/release-mirror/sizes.json \
             build/release-mirror/update-manifest.js \
             "$SSH_TARGET:$RELEASES_DIR/$RELEASE_TAG/"
 
           ssh -p "$SSH_PORT" -i ~/.ssh/pyrita_release "${SSH_OPTS[@]}" "$SSH_TARGET" \
-            "RELEASES_DIR='$RELEASES_DIR' RELEASE_TAG='$RELEASE_TAG' node '$RELEASES_DIR/$RELEASE_TAG/update-manifest.js' && rm -f '$RELEASES_DIR/$RELEASE_TAG/update-manifest.js'"
+            "RELEASES_DIR='$RELEASES_DIR' RELEASE_TAG='$RELEASE_TAG' GITHUB_REPOSITORY='$GITHUB_REPOSITORY' node '$RELEASES_DIR/$RELEASE_TAG/update-manifest.js' && rm -f '$RELEASES_DIR/$RELEASE_TAG/update-manifest.js'"

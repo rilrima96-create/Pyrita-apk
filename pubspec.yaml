@@ -5,7 +5,7 @@ publish_to: "none"
 # package versioning: <semantic>+<build>
 # Bump <build> (целое число) каждый Android-release — Play и RuStore
 # отказывают APK'у с тем же versionCode что уже опубликован.
-version: 0.1.40+2050
+version: 0.1.41+2051
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
