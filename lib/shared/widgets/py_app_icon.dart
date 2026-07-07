@@ -58,9 +58,9 @@ class _PyAppIconState extends State<PyAppIcon>
 
   String get _asset {
     final base = switch (widget.variant) {
-      PyAppIconVariant.core => 'icon-a-core',
-      PyAppIconVariant.pyrite => 'icon-b-pyrite',
-      PyAppIconVariant.fractal => 'icon-c-fractal',
+      PyAppIconVariant.core => 'icon-route',
+      PyAppIconVariant.pyrite => 'icon-route',
+      PyAppIconVariant.fractal => 'icon-route',
     };
     return 'assets/images/$base${widget.tight ? '-tight' : ''}.png';
   }

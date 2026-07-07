@@ -1,27 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 96" width="320" height="96" aria-label="Pyrita">
-  <defs>
-    <linearGradient id="lk2-top" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#F2D58A"></stop><stop offset="100%" stop-color="#C99A3F"></stop>
-    </linearGradient>
-    <linearGradient id="lk2-l" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#B6822E"></stop><stop offset="100%" stop-color="#7A5519"></stop>
-    </linearGradient>
-    <linearGradient id="lk2-r" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#D8A044"></stop><stop offset="100%" stop-color="#965E1B"></stop>
-    </linearGradient>
-    <radialGradient id="lk2-core" cx="50%" cy="50%" r="60%">
-      <stop offset="0%" stop-color="#FFD79A"></stop><stop offset="35%" stop-color="#F08A3A"></stop><stop offset="100%" stop-color="#C44E1B"></stop>
-    </radialGradient>
-  </defs>
-  <g transform="translate(0,0)" stroke="#3A2510" stroke-width="0.9" stroke-linejoin="round">
-    <ellipse cx="48" cy="50" rx="22" ry="13" fill="#E8643A" opacity=".22"></ellipse>
-    <g><polygon points="40,16 56,22 56,34 40,28" fill="url(#lk2-r)"></polygon><polygon points="40,16 24,22 40,28 56,22" fill="url(#lk2-top)"></polygon><polygon points="24,22 40,28 40,40 24,34" fill="url(#lk2-l)"></polygon></g>
-    <g><polygon points="20,30 36,36 36,48 20,42" fill="url(#lk2-r)"></polygon><polygon points="20,30 4,36 20,42 36,36" fill="url(#lk2-top)"></polygon><polygon points="4,36 20,42 20,54 4,48" fill="url(#lk2-l)"></polygon></g>
-    <g><polygon points="76,30 92,36 76,42 60,36" fill="url(#lk2-top)"></polygon><polygon points="76,30 60,36 60,48 76,42" fill="url(#lk2-l)"></polygon><polygon points="92,36 76,42 76,54 92,48" fill="url(#lk2-r)"></polygon></g>
-    <g><polygon points="48,40 58,44 58,52 48,48" fill="url(#lk2-core)"></polygon><polygon points="48,40 38,44 48,48 58,44" fill="#FFB766"></polygon><polygon points="38,44 48,48 48,56 38,52" fill="#C44E1B"></polygon></g>
-    <g><polygon points="28,52 44,58 44,72 28,66" fill="url(#lk2-r)"></polygon><polygon points="28,52 12,58 28,66 44,58" fill="url(#lk2-top)"></polygon><polygon points="12,58 28,66 28,80 12,72" fill="url(#lk2-l)"></polygon></g>
-    <g><polygon points="48,58 64,64 64,76 48,70" fill="url(#lk2-r)"></polygon><polygon points="48,58 32,64 48,70 64,64" fill="url(#lk2-top)"></polygon><polygon points="32,64 48,70 48,84 32,76" fill="url(#lk2-l)"></polygon></g>
-    <g><polygon points="68,52 84,58 84,72 68,66" fill="url(#lk2-r)"></polygon><polygon points="68,52 52,58 68,66 84,58" fill="url(#lk2-top)"></polygon><polygon points="52,58 68,66 68,80 52,72" fill="url(#lk2-l)"></polygon></g>
-  </g>
-  <text x="110" y="62" font-family="Manrope, system-ui, sans-serif" font-weight="700" font-size="42" letter-spacing="-0.025em" fill="currentColor">Pyrita</text>
+  <svg x="0" y="0" width="96" height="96" viewBox="0 0 512 512">
+    <defs>
+        <radialGradient id="bg" cx="45%" cy="36%" r="78%">
+          <stop offset="0" stop-color="#1B2730"/>
+          <stop offset="0.58" stop-color="#0D1117"/>
+          <stop offset="1" stop-color="#050608"/>
+        </radialGradient>
+        <linearGradient id="routeGold" x1="139" y1="111" x2="370" y2="394" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#FFE8A3"/>
+          <stop offset="0.42" stop-color="#F4B33C"/>
+          <stop offset="1" stop-color="#C66522"/>
+        </linearGradient>
+        <linearGradient id="cyan" x1="134" y1="151" x2="380" y2="338" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#A9F4FF"/>
+          <stop offset="1" stop-color="#23A6D5"/>
+        </linearGradient>
+        <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="14"/>
+        </filter>
+      </defs>
+      <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+      <path d="M158 328 C206 392 310 397 358 330 C401 270 376 184 309 154 C248 126 174 154 145 216"
+            fill="none" stroke="#34C6F4" stroke-width="48" stroke-linecap="round" opacity="0.22" filter="url(#glow)"/>
+      <path d="M158 328 C206 392 310 397 358 330 C401 270 376 184 309 154 C248 126 174 154 145 216"
+            fill="none" stroke="url(#cyan)" stroke-width="28" stroke-linecap="round"/>
+      <path d="M154 330 C210 381 299 365 333 302 C363 245 331 180 270 171"
+            fill="none" stroke="#0C1117" stroke-width="70" stroke-linecap="round"/>
+      <path d="M154 330 C210 381 299 365 333 302 C363 245 331 180 270 171"
+            fill="none" stroke="url(#routeGold)" stroke-width="38" stroke-linecap="round"/>
+      <path d="M170 183 258 132 346 183 346 285 258 336 170 285Z" fill="#10151B"/>
+      <path d="M258 132 346 183 258 234 170 183Z" fill="#FFE8A3"/>
+      <path d="M170 183 258 234 258 336 170 285Z" fill="#B8651F"/>
+      <path d="M346 183 258 234 258 336 346 285Z" fill="#F0A63A"/>
+      <circle cx="158" cy="328" r="34" fill="#111820" stroke="#8AEFFF" stroke-width="10"/>
+      <circle cx="158" cy="328" r="13" fill="#D9FBFF"/>
+      <circle cx="366" cy="190" r="24" fill="#111820" stroke="#F9C151" stroke-width="9"/>
+      <circle cx="366" cy="190" r="9" fill="#FFF4C0"/>
+  </svg>
+  <text x="112" y="61" font-family="Manrope, system-ui, sans-serif" font-weight="800" font-size="42" letter-spacing="0" fill="#F8F2E3">Pyrita</text>
 </svg>

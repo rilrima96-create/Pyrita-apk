@@ -5,7 +5,7 @@ publish_to: "none"
 # package versioning: <semantic>+<build>
 # Bump <build> (целое число) каждый Android-release — Play и RuStore
 # отказывают APK'у с тем же versionCode что уже опубликован.
-version: 0.1.32+2042
+version: 0.1.33+2043
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -95,12 +95,10 @@ dev_dependencies:
   # Запуск: `dart run flutter_launcher_icons` (выполняется в CI шаге).
   flutter_launcher_icons: ^0.14.4
 
-# Конфиг flutter_launcher_icons. Финальные иконки из дизайн-системы:
-#   * icon-launcher-foreground.png — isometric golden pyrite cube с внутренним
-#     свечением (transparent backdrop, safe-zone fit'нут для adaptive icon).
-#   * icon-launcher-legacy.png — тот же cube на тёмном #0E0F12 backdrop
-#     (full-bleed для Android <8 не-adaptive launcher).
-# Источник: Pyrita Design System «Icons» canvas, v0.1.1.
+# Конфиг flutter_launcher_icons. Иконки собраны из Route-направления:
+#   * icon-launcher-foreground.png — прозрачный Route mark для adaptive icon.
+#   * icon-launcher-legacy.png — полный Route icon на темной подложке.
+# Источник: pyrita-web/docs/brand/pyrita-icon-concept-2-route.svg.
 flutter_launcher_icons:
   android: true
   ios: false
