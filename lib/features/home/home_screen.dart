@@ -766,23 +766,25 @@ class _ServerCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        pingMs != null ? '$pingMs' : '—',
+                        pingMs != null ? '$pingMs' : 'VPN',
                         style: PyDS.font(
                           size: 13,
                           weight: FontWeight.w700,
                           color: PyDS.on,
                         ),
                       ),
-                      const SizedBox(width: 2),
-                      Text(
-                        'MS',
-                        style: PyDS.font(
-                          size: 10,
-                          weight: FontWeight.w600,
-                          letterSpacing: 0.4,
-                          color: PyDS.textFaint,
+                      if (pingMs != null) ...[
+                        const SizedBox(width: 2),
+                        Text(
+                          'MS',
+                          style: PyDS.font(
+                            size: 10,
+                            weight: FontWeight.w600,
+                            letterSpacing: 0.4,
+                            color: PyDS.textFaint,
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 2),

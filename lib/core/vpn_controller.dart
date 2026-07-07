@@ -135,6 +135,13 @@ class _BuiltXrayConfig {
 }
 
 @visibleForTesting
+PyritaVpnStatus applyTunnelDelaySample(PyritaVpnStatus status, int ms) {
+  if (!status.isConnected) return status;
+  if (ms <= 0) return status;
+  return status.copyWith(serverPingMs: ms);
+}
+
+@visibleForTesting
 Map<String, dynamic> buildStableVpnDnsConfig() => <String, dynamic>{
       'queryStrategy': 'UseIPv4',
       'servers': [
@@ -821,17 +828,12 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
             '[Pyrita-VPN] ping returned $ms '
             '(failure $_consecutivePingFailures/3)',
           );
-          state = state.copyWith(serverPingMs: null);
-          unawaited(PyritaNotificationService.instance.updatePing(
-            serverName: state.serverName,
-            pingMs: null,
-          ));
           return;
         }
         _consecutivePingFailures = 0;
         // ignore: avoid_print
         print('[Pyrita-VPN] ping=$ms ms');
-        state = state.copyWith(serverPingMs: ms);
+        state = applyTunnelDelaySample(state, ms);
         // Notification debounce'ит само если ping не сильно изменился.
         unawaited(PyritaNotificationService.instance.updatePing(
           serverName: state.serverName,

@@ -33,4 +33,29 @@ void main() {
     expect(updated.serverPingMs, 77);
     expect(updated.downloadSpeed, 1024);
   });
+
+  test('failed tunnel delay sample keeps the last good ping', () {
+    const status = PyritaVpnStatus(
+      state: PyritaVpnState.connected,
+      serverPingMs: 61,
+    );
+
+    final updated = applyTunnelDelaySample(status, -1);
+
+    expect(updated.serverPingMs, 61);
+  });
+
+  test('successful tunnel delay sample updates ping only while connected', () {
+    const connected = PyritaVpnStatus(
+      state: PyritaVpnState.connected,
+      serverPingMs: 61,
+    );
+    const disconnected = PyritaVpnStatus(
+      state: PyritaVpnState.disconnected,
+      serverPingMs: 61,
+    );
+
+    expect(applyTunnelDelaySample(connected, 72).serverPingMs, 72);
+    expect(applyTunnelDelaySample(disconnected, 72).serverPingMs, 61);
+  });
 }
