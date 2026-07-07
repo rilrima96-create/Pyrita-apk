@@ -66,11 +66,20 @@ Device: `RF8XB03BBXM`.
 
 ## Open follow-ups
 
-- Do not call the Android fix complete until the signed `v0.1.34` APK is
-  installed over the current production package and real browser/app traffic is
-  verified through the selected US-HY2 route.
-- Compare the generated Android Xray configs against a known-good client profile
-  on the same phone, or replace the Android tunnel/core path with a more
-  reliable implementation if the wrapper keeps reporting false connected states.
-- After the tunnel is fixed, rerun phone checks for Helsinki and USA with real
-  browser traffic, not only Android VPN validation.
+- 2026-07-07 update: signed release `v0.1.38` / `0.1.38+2048` was installed on
+  phone `RF8XB03BBXM` as the normal package `com.pyrita.pyrita_app`. The phone
+  has no debug/QA Pyrita package installed.
+- Android connectivity reported Pyrita as the VPN owner with `tun0`, full
+  `0.0.0.0/0` route, and session `Pyrita · Хельсинки`.
+- Real traffic verified under Pyrita `v0.1.38`: Chrome `https://example.com`,
+  Chrome `https://m.youtube.com`, and the YouTube Android app watch page all
+  loaded.
+- The current release uses a short-path HTTP-proxy route: TCP goes through the
+  Pyrita proxy edge, UDP goes direct to avoid Android Chromium/Yandex QUIC
+  hangs. This is working enough for the phone smoke test, but it is not the
+  final mobile VPN architecture.
+- Remaining follow-ups: replace this emergency path with a UDP-capable mobile
+  transport, fix/soften the app ping healthcheck that logs failures during
+  heavy YouTube traffic, and investigate Yandex Browser on Android separately
+  because Chrome and the YouTube app work while Yandex showed a blank page.
+- Windows Hiddify was intentionally not touched.
