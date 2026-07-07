@@ -2,53 +2,75 @@
 
 Last updated: 2026-07-07 local time.
 
-## Android release candidate `0.1.32+2042`
+## Android debug stability check
 
-- Source version is bumped to `0.1.32+2042`.
-- In-app updates now check `https://api.pyrita.com/api/release/latest` first.
-- The expected direct APK asset is `app-arm64-v8a-release.apk`.
-- GitHub Releases API is retained only as a fallback if the Pyrita endpoint is
-  unavailable.
-- Release workflow can mirror signed direct APKs to the Pyrita web server when
-  the `PYRITA_RELEASE_SSH_*` GitHub Actions secrets are configured.
-- Local checks passed: `flutter test test/update_service_test.dart` and
-  `flutter analyze`.
-- Do not install the local debug app over `com.pyrita.pyrita_app`. The user
-  needs a signed release APK from CI/tag `v0.1.32` or the same release key.
-
-## Android app state
-
-- Debug builds install side by side as `Pyrita QA` (`com.pyrita.pyrita_app.debug`).
-- The normal `Pyrita` package (`com.pyrita.pyrita_app`) is still the older installed app. Android will not allow replacing it from the local debug build because package signatures differ.
-- A release update for the normal package requires `android/key.properties` with the signing credentials for `keystore.jks`. Do not commit that file.
+- Local debug builds now use the visible app label `Pyrita`, not `Pyrita QA`.
+- The debug package id remains `com.pyrita.pyrita_app.debug` so it can be
+  installed side by side with the signed production package.
+- The normal signed `Pyrita` package is `com.pyrita.pyrita_app`. Android will
+  not allow replacing it from the local debug build because package signatures
+  differ.
+- A release update for the normal package requires `android/key.properties` with
+  the signing credentials for `keystore.jks`. Do not commit that file.
 
 ## What changed in this session
 
-- Auth cookies are now stored only when the server sends a real session cookie. Deletion or empty cookie headers clear the session instead of saving a broken cookie.
-- Account screen uses cached email immediately, limits slow core loading, and treats optional sections as optional so the screen does not stay stuck.
-- Server picker now builds a safe server catalog from the subscription and supports a cached server snapshot while VPN is already connected.
+- Android Xray config stripping for removed `allowInsecure` fields remains in
+  place. Newer Xray builds reject those fields.
+- Server picker still builds a safe server catalog from the subscription and
+  supports cached server snapshots while VPN is already connected.
 - Server snapshot storage intentionally excludes VPN URLs and secrets.
-- Android Xray config strips removed `allowInsecure` fields before starting the core. Newer Xray builds reject those fields.
-- US server selection now prefers the VLESS profile when the backend exposes it.
+- US server selection now has a hard Android safety override: if a US Hysteria2
+  profile is present, the picker and the actual Xray config choose it before
+  the known-bad US VLESS/WebSocket/XHTTP fallbacks.
+- `PyritaVpnStatus.copyWith` can now explicitly clear transient errors and ping
+  values, so stale errors are not kept accidentally.
+- VPN ping/health timers are no longer restarted on every repeated CONNECTED
+  callback. They start on transition into connected state.
+- Android/Xray `CONNECTED` is no longer treated as final proof of usable
+  internet. After the core reports connected, the app performs tunnel health
+  checks and stops the VPN if internet through the tunnel does not answer.
+- The app no longer auto-opens the full diagnostics dialog on VPN errors.
+  Errors stay in the inline banner; detailed logs remain available from the
+  manual logs button.
+
+## Verified locally
+
+- `dart format lib\features\home\home_screen.dart`
+- `flutter test` passed (`24/24`).
+- `flutter analyze` passed with no issues.
+- `flutter build apk --debug` passed.
+- `aapt dump badging` confirms all application labels are `Pyrita`.
+- 2026-07-07: targeted regression tests passed for US-HY2 preference over both
+  generic US VLESS and US VLESS XHTTP.
 
 ## Verified on device
 
 Device: `RF8XB03BBXM`.
 
-- Installed and launched `Pyrita QA`.
-- Server picker opens while disconnected and shows:
-  - Helsinki / VLESS Reality
-  - USA / VLESS
-- Selecting Helsinki updates the home card to `Helsinki · FI`.
-- Selecting USA updates the home card to `USA · US`.
-- USA connects in `Pyrita QA`; Android reports a validated VPN network with session `Pyrita · USA`.
-- Server picker also opens while VPN is already connected.
-- Switching from connected USA to Helsinki keeps VPN connected and updates the selected server.
-- Switching back from Helsinki to USA keeps VPN connected and leaves the phone on USA.
-- Account screen no longer forces login and opens using cached identity, but the plan refresh can still show a soft failure if `/api/me` is slow through the active VPN.
+- Debug APK installed successfully.
+- The visible app title is `Pyrita`.
+- Baseline phone internet without Pyrita VPN was verified in Chrome before this
+  investigation.
+- Earlier US and Finland VPN attempts reached Android/Xray connected state, but
+  real browser traffic did not complete. Treat Android `VALIDATED` alone as
+  insufficient proof.
+- 2026-07-07 official `v0.1.33` on the same phone still selected US
+  VLESS/WebSocket (`us.pyrita.com:443`) and reproduced the bad route. The local
+  `v0.1.34` patch is intended to update the signed package and force US-HY2
+  before retesting real browser traffic.
+- Final Helsinki check after the health-gate change: the app briefly reaches
+  protected state, then the tunnel health check fails, the VPN stops, and the
+  UI shows `Ошибка подключения` with the message that internet through the
+  tunnel does not answer. No full-screen diagnostics dialog auto-opens.
 
 ## Open follow-ups
 
-- Build and install a properly signed release APK over `com.pyrita.pyrita_app` once signing credentials are available locally or via CI.
-- Polish Account plan refresh so a slow `/api/me` does not show alarming copy when cached account data is available.
-- Run longer real-use checks on phone apps such as browser, Telegram, and ChatGPT while `Pyrita QA` is connected to USA.
+- Do not call the Android fix complete until the signed `v0.1.34` APK is
+  installed over the current production package and real browser/app traffic is
+  verified through the selected US-HY2 route.
+- Compare the generated Android Xray configs against a known-good client profile
+  on the same phone, or replace the Android tunnel/core path with a more
+  reliable implementation if the wrapper keeps reporting false connected states.
+- After the tunnel is fixed, rerun phone checks for Helsinki and USA with real
+  browser traffic, not only Android VPN validation.

@@ -385,17 +385,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     // onStatusChanged callback (примерно раз в секунду пока активно).
     final vpnStatus = ref.watch(vpnControllerProvider);
 
-    // На переход в error — auto-open диалог с full logs + copy-button.
-    // Snackbar малоинформативен (пропадает за 4 сек), banner может clip
-    // длинный stack trace — диалог гарантированно показывает всё.
-    ref.listen<PyritaVpnStatus>(vpnControllerProvider, (prev, next) {
-      if (_vpnDiagnosticsEnabled && next.isError && prev?.isError != true) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _showLogsDialog();
-        });
-      }
-    });
-
     final connState = _mapState(vpnStatus.state);
 
     return Scaffold(
@@ -590,12 +579,12 @@ class _StatusBlock extends StatelessWidget {
     final chipColor = isOn ? PyDS.on : PyDS.textMute;
 
     final title = isOn
-        ? 'Интернет работает'
+        ? 'Соединение защищено'
         : isPending
             ? 'Подключаемся'
             : 'Готов к подключению';
     final subtitle = isOn
-        ? 'Сайты и звонки работают как обычно'
+        ? 'VPN активен, проверяйте скорость в карточке сервера'
         : isPending
             ? 'Это займёт пару секунд'
             : 'Один тап — и трафик защищён';

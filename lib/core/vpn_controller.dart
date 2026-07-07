@@ -21,6 +21,8 @@ import 'vpn_server_catalog.dart';
 ///   * прочее → `error`
 enum PyritaVpnState { disconnected, connecting, connected, error }
 
+const Object _copyWithUnset = Object();
+
 /// Снимок состояния VPN на момент времени. Иммутабельный — Riverpod-friendly.
 ///
 /// Поля скоростей и трафика приходят от Xray-core stats каждые ~1 сек, когда
@@ -94,8 +96,8 @@ class PyritaVpnStatus {
     int? uploadTotal,
     int? downloadTotal,
     String? duration,
-    String? errorMessage,
-    int? serverPingMs,
+    Object? errorMessage = _copyWithUnset,
+    Object? serverPingMs = _copyWithUnset,
     String? preferredProtocolId,
     String? preferredServerId,
     String? serverName,
@@ -108,8 +110,12 @@ class PyritaVpnStatus {
       uploadTotal: uploadTotal ?? this.uploadTotal,
       downloadTotal: downloadTotal ?? this.downloadTotal,
       duration: duration ?? this.duration,
-      errorMessage: errorMessage ?? this.errorMessage,
-      serverPingMs: serverPingMs ?? this.serverPingMs,
+      errorMessage: identical(errorMessage, _copyWithUnset)
+          ? this.errorMessage
+          : errorMessage as String?,
+      serverPingMs: identical(serverPingMs, _copyWithUnset)
+          ? this.serverPingMs
+          : serverPingMs as int?,
       preferredProtocolId: preferredProtocolId ?? this.preferredProtocolId,
       preferredServerId: preferredServerId ?? this.preferredServerId,
       serverName: serverName ?? this.serverName,
@@ -262,6 +268,68 @@ void stripRemovedXraySettings(Map<String, dynamic> configMap) {
   visit(configMap);
 }
 
+@visibleForTesting
+List<String> vpnBootstrapDomainsForUrl(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return const [];
+
+  final hosts = <String>{};
+  void addHost(String? value) {
+    final host = _trimOrNull(value)?.toLowerCase();
+    if (host == null || _looksLikeIpAddress(host)) return;
+    hosts.add('full:$host');
+  }
+
+  addHost(uri.host);
+  addHost(uri.queryParameters['sni']);
+  addHost(uri.queryParameters['host']);
+
+  return hosts.toList(growable: false);
+}
+
+@visibleForTesting
+List<Map<String, dynamic>> buildVpnRoutingRules({
+  required String primaryUrl,
+  required List<String> ruDomainsBypass,
+}) {
+  final bootstrapDomains = vpnBootstrapDomainsForUrl(primaryUrl);
+  return <Map<String, dynamic>>[
+    {
+      'type': 'field',
+      'network': 'tcp,udp',
+      'port': '53',
+      'outboundTag': 'direct',
+    },
+    if (bootstrapDomains.isNotEmpty)
+      {
+        'type': 'field',
+        'domain': bootstrapDomains,
+        'outboundTag': 'direct',
+      },
+    {
+      'type': 'field',
+      'network': 'udp',
+      'port': '443',
+      'outboundTag': 'blackhole',
+    },
+    {
+      'type': 'field',
+      'domain': ruDomainsBypass,
+      'outboundTag': 'direct',
+    },
+    {
+      'type': 'field',
+      'ip': ['geoip:private'],
+      'outboundTag': 'direct',
+    },
+  ];
+}
+
+bool _looksLikeIpAddress(String host) {
+  return RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(host) ||
+      host.contains(':');
+}
+
 String _decodeHysteriaUrlPart(String value) {
   try {
     return Uri.decodeComponent(value);
@@ -323,6 +391,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   /// Period-таймер для обновления server ping каждые 5 сек когда connected.
   Timer? _pingTimer;
 
+  int _consecutivePingFailures = 0;
+
+  String? _pendingTunnelFailureMessage;
+
   /// Subscription на connectivity_plus events. Cancel в dispose().
   StreamSubscription<List<ConnectivityResult>>? _connSub;
 
@@ -355,6 +427,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   static const _prefKeyPreferredProtocol = 'preferred_protocol';
   static const _prefKeyPreferredServer = 'preferred_server';
   static const _defaultProtocol = 'reality';
+  static const _tunnelHealthCheckUrl =
+      'http://clients3.google.com/generate_204';
 
   /// Курированный список RU-доменов которые должны идти direct (без VPN
   /// туннеля). Без этого банки / госуслуги / маркетплейсы видят финский IP
@@ -540,12 +614,31 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
 
   void _onStatusChanged(V2RayStatus s) {
     if (!mounted) return;
+    final previous = state;
     final mapped = switch (s.state.toUpperCase()) {
       'CONNECTED' => PyritaVpnState.connected,
       'CONNECTING' => PyritaVpnState.connecting,
       'DISCONNECTED' => PyritaVpnState.disconnected,
       _ => PyritaVpnState.error,
     };
+
+    final pendingFailure = _pendingTunnelFailureMessage;
+    if (mapped == PyritaVpnState.disconnected && pendingFailure != null) {
+      _pendingTunnelFailureMessage = null;
+      _stopPingTimer();
+      _consecutivePingFailures = 0;
+      state = PyritaVpnStatus(
+        state: PyritaVpnState.error,
+        errorMessage: pendingFailure,
+        preferredProtocolId: previous.preferredProtocolId,
+        preferredServerId: previous.preferredServerId,
+        serverName: previous.serverName,
+        serverCountryCode: previous.serverCountryCode,
+      );
+      unawaited(PyritaNotificationService.instance.hide());
+      return;
+    }
+
     state = state.copyWith(
       state: mapped,
       uploadSpeed: s.uploadSpeed,
@@ -567,16 +660,20 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       if (_connectedCompleter != null && !_connectedCompleter!.isCompleted) {
         _connectedCompleter!.complete();
       }
-      _startPingTimer();
-      // Кастомная notification: ставим как только Xray-core эмитит
-      // CONNECTED. Updates на каждом ping tick'е через
-      // PyritaNotificationService.updatePing (debounced там же).
-      unawaited(PyritaNotificationService.instance.showConnected(
-        serverName: state.serverName,
-        pingMs: state.serverPingMs,
-      ));
+      if (!previous.isConnected) {
+        _consecutivePingFailures = 0;
+        _startPingTimer();
+        // Кастомная notification: ставим как только Xray-core эмитит
+        // CONNECTED. Updates на каждом ping tick'е через
+        // PyritaNotificationService.updatePing (debounced там же).
+        unawaited(PyritaNotificationService.instance.showConnected(
+          serverName: state.serverName,
+          pingMs: state.serverPingMs,
+        ));
+      }
     } else {
       _stopPingTimer();
+      _consecutivePingFailures = 0;
       if (mapped == PyritaVpnState.connecting) {
         unawaited(PyritaNotificationService.instance.showConnecting(
           serverName: state.serverName,
@@ -605,18 +702,27 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
         // в logs). Сейчас `clients3.google.com/generate_204` — endpoint
         // Android'а для captive-portal detection, доступен из любой
         // юрисдикции через VPN egress.
-        final ms = await _v2ray.getConnectedServerDelay(
-          url: 'http://clients3.google.com/generate_204',
-        );
+        final ms = await _measureTunnelDelay();
         if (!mounted || !state.isConnected) return;
         // Plugin возвращает -1 при timeout / failure. Не пишем такие в
         // state — UI рендерит '—' если pingMs null, что точнее чем
         // показывать -1.
         if (ms <= 0) {
+          _consecutivePingFailures += 1;
           // ignore: avoid_print
-          print('[Pyrita-VPN] ping returned $ms (timeout or error)');
+          print(
+            '[Pyrita-VPN] ping returned $ms '
+            '(failure $_consecutivePingFailures/3)',
+          );
+          if (_consecutivePingFailures >= 3) {
+            unawaited(_stopWithTunnelFailure(
+              'VPN подключился, но интернет через туннель не отвечает. '
+              'Попробуйте другой сервер или перезапустите подключение.',
+            ));
+          }
           return;
         }
+        _consecutivePingFailures = 0;
         // ignore: avoid_print
         print('[Pyrita-VPN] ping=$ms ms');
         state = state.copyWith(serverPingMs: ms);
@@ -630,6 +736,63 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
         print('[Pyrita-VPN] ping exception: $e');
       }
     });
+  }
+
+  Future<int> _measureTunnelDelay() async {
+    try {
+      return await _v2ray
+          .getConnectedServerDelay(url: _tunnelHealthCheckUrl)
+          .timeout(
+            const Duration(seconds: 8),
+            onTimeout: () => -1,
+          );
+    } catch (_) {
+      return -1;
+    }
+  }
+
+  Future<int> _waitForTunnelHealth() async {
+    for (var attempt = 1; attempt <= 3; attempt += 1) {
+      final ms = await _measureTunnelDelay();
+      if (ms > 0) return ms;
+
+      // ignore: avoid_print
+      print('[Pyrita-VPN] startup healthcheck failed ($attempt/3)');
+      if (attempt < 3) {
+        await Future.delayed(const Duration(seconds: 2));
+      }
+    }
+
+    throw TimeoutException(
+      'VPN подключился, но интернет через туннель не отвечает. '
+      'Попробуйте другой сервер или сообщите в поддержку.',
+      const Duration(seconds: 30),
+    );
+  }
+
+  Future<void> _stopWithTunnelFailure(String message) async {
+    if (_pendingTunnelFailureMessage != null) return;
+    _pendingTunnelFailureMessage = message;
+    _stopPingTimer();
+    try {
+      await _v2ray.stopV2Ray();
+    } catch (_) {
+      // If native stop fails, still move UI to a truthful error state below.
+    }
+
+    await Future.delayed(const Duration(milliseconds: 250));
+    if (!mounted || _pendingTunnelFailureMessage != message) return;
+    _pendingTunnelFailureMessage = null;
+    _consecutivePingFailures = 0;
+    state = PyritaVpnStatus(
+      state: PyritaVpnState.error,
+      errorMessage: message,
+      preferredProtocolId: state.preferredProtocolId,
+      preferredServerId: state.preferredServerId,
+      serverName: state.serverName,
+      serverCountryCode: state.serverCountryCode,
+    );
+    unawaited(PyritaNotificationService.instance.hide());
   }
 
   void _stopPingTimer() {
@@ -889,6 +1052,25 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       } finally {
         _connectedCompleter = null;
       }
+
+      final int initialPingMs;
+      try {
+        initialPingMs = await _waitForTunnelHealth();
+      } catch (e) {
+        await _stopWithTunnelFailure(
+          e is TimeoutException && e.message != null
+              ? e.message!
+              : 'VPN подключился, но интернет через туннель не отвечает.',
+        );
+        rethrow;
+      }
+      if (!mounted || !state.isConnected) return;
+      _consecutivePingFailures = 0;
+      state = state.copyWith(serverPingMs: initialPingMs);
+      unawaited(PyritaNotificationService.instance.updatePing(
+        serverName: state.serverName,
+        pingMs: initialPingMs,
+      ));
     } catch (e, st) {
       // ignore: avoid_print
       print('[Pyrita-VPN] start() exception: ${e.runtimeType}: $e');
@@ -992,6 +1174,8 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     // Иначе сценарий: сеть пропадает → юзер тапает «отключить» → сеть
     // возвращается → tunnel сам поднимается (нежелательно).
     _wasConnectedBeforeNetLoss = false;
+    _pendingTunnelFailureMessage = null;
+    _consecutivePingFailures = 0;
     try {
       await _v2ray.stopV2Ray();
     } catch (_) {
@@ -1196,24 +1380,10 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
     // 4. Всё остальное → proxy (VPN tunnel).
     configMap['routing'] = <String, dynamic>{
       'domainStrategy': 'IPIfNonMatch',
-      'rules': [
-        {
-          'type': 'field',
-          'network': 'udp',
-          'port': '443',
-          'outboundTag': 'blackhole',
-        },
-        {
-          'type': 'field',
-          'domain': _ruDomainsBypass,
-          'outboundTag': 'direct',
-        },
-        {
-          'type': 'field',
-          'ip': ['geoip:private'],
-          'outboundTag': 'direct',
-        },
-      ],
+      'rules': buildVpnRoutingRules(
+        primaryUrl: primaryUrl,
+        ruDomainsBypass: _ruDomainsBypass,
+      ),
     };
 
     return _BuiltXrayConfig(
@@ -1308,7 +1478,7 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
   ///   1. Если `preferred` указан и matching URL есть в подписке —
   ///      берём его (например 'xhttp' → vless+type=xhttp URL).
   ///   2. Если preferred недоступен (или 'reality' = default) →
-  ///      приоритет: VLESS Reality > VLESS XHTTP > любой VLESS.
+  ///      приоритет: VLESS Reality > Hysteria2 > VLESS XHTTP > любой VLESS.
   ///   3. Если VLESS нет вовсе → fallback на любой parseable
   ///      (vmess/trojan/ss/socks) — это «recovery mode» если backend
   ///      сменил основной протокол.
@@ -1321,36 +1491,47 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       // Preferred unavailable — fallback на стандартный порядок.
     }
 
-    // Step 2: VLESS Reality (default primary).
+    // Step 2: US safety override. The current Android failure mode is a green
+    // VPN over US VLESS/WebSocket with dead HTTPS traffic. If the subscription
+    // contains the tested US-HY2 profile, use it before any US VLESS fallback.
+    if (urls.any((u) => vpnServerIdForUrl(u) == 'us')) {
+      final usHysteria2 = urls.firstWhere(
+        isHysteria2SubscriptionUrl,
+        orElse: () => '',
+      );
+      if (usHysteria2.isNotEmpty) return usHysteria2;
+    }
+
+    // Step 3: VLESS Reality (default primary).
     final reality = urls.firstWhere(
       (u) => u.startsWith('vless://') && u.contains('security=reality'),
       orElse: () => '',
     );
     if (reality.isNotEmpty) return reality;
 
-    // Step 3: VLESS XHTTP.
-    final xhttp = urls.firstWhere(
-      (u) => u.startsWith('vless://') && u.contains('type=xhttp'),
-      orElse: () => '',
-    );
-    if (xhttp.isNotEmpty) return xhttp;
-
-    // Step 4: Любой VLESS.
-    final anyVless = urls.firstWhere(
-      (u) => u.startsWith('vless://'),
-      orElse: () => '',
-    );
-    if (anyVless.isNotEmpty) return anyVless;
-
-    // Step 5: Hysteria2. flutter_v2ray_client не парсит hy2:// через
-    // parseFromURL, поэтому ниже для него есть ручной Xray-config builder.
+    // Step 4: Hysteria2. Если Reality нет, это лучший Android-кандидат для
+    // US: обычные VLESS/WS профили уже давали green VPN без usable traffic.
     final anyHysteria2 = urls.firstWhere(
       isHysteria2SubscriptionUrl,
       orElse: () => '',
     );
     if (anyHysteria2.isNotEmpty) return anyHysteria2;
 
-    // Step 6: Recovery mode — любой parseable URL (если backend сменил
+    // Step 5: VLESS XHTTP.
+    final xhttp = urls.firstWhere(
+      (u) => u.startsWith('vless://') && u.contains('type=xhttp'),
+      orElse: () => '',
+    );
+    if (xhttp.isNotEmpty) return xhttp;
+
+    // Step 6: Любой VLESS.
+    final anyVless = urls.firstWhere(
+      (u) => u.startsWith('vless://'),
+      orElse: () => '',
+    );
+    if (anyVless.isNotEmpty) return anyVless;
+
+    // Step 7: Recovery mode — любой parseable URL (если backend сменил
     // primary protocol на trojan/ss/vmess — клиент пытается подключиться
     // через него вместо упорного crash'а с «VLESS не найден»).
     final anyParseable = urls.firstWhere(

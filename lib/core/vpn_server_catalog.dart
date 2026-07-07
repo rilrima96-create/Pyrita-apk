@@ -245,10 +245,18 @@ String _pickRepresentativeUrl(List<String> urls) {
     return urls.firstWhere(test, orElse: () => '');
   }
 
+  if (urls.any((url) => vpnServerIdForUrl(url) == 'us')) {
+    final usHy2 = firstWhere(isHysteria2SubscriptionUrl);
+    if (usHy2.isNotEmpty) return usHy2;
+  }
+
   final reality = firstWhere(
     (url) => url.startsWith('vless://') && url.contains('security=reality'),
   );
   if (reality.isNotEmpty) return reality;
+
+  final hy2 = firstWhere(isHysteria2SubscriptionUrl);
+  if (hy2.isNotEmpty) return hy2;
 
   final xhttp = firstWhere(
     (url) => url.startsWith('vless://') && url.contains('type=xhttp'),

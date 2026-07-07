@@ -78,4 +78,48 @@ void main() {
     final routing = reDecoded['routing'] as Map<String, dynamic>;
     expect((routing['rules'] as List).length, 3);
   });
+
+  test('VPN bootstrap domains are routed directly', () {
+    final domains = vpnBootstrapDomainsForUrl(
+      'vless://12345678-1234-1234-1234-123456789012@us.pyrita.com:443'
+      '?type=ws&security=tls&sni=www.bing.com&host=edge.pyrita.com'
+      '#Pyrita-US',
+    );
+
+    expect(
+        domains,
+        containsAll([
+          'full:us.pyrita.com',
+          'full:www.bing.com',
+          'full:edge.pyrita.com',
+        ]));
+  });
+
+  test('routing rules keep DNS and VPN bootstrap outside the tunnel', () {
+    final rules = buildVpnRoutingRules(
+      primaryUrl:
+          'vless://12345678-1234-1234-1234-123456789012@us.pyrita.com:443'
+          '?type=ws&security=tls#Pyrita-US',
+      ruDomainsBypass: const ['domain:sberbank.ru'],
+    );
+
+    expect(rules[0], {
+      'type': 'field',
+      'network': 'tcp,udp',
+      'port': '53',
+      'outboundTag': 'direct',
+    });
+    expect(rules[1], {
+      'type': 'field',
+      'domain': ['full:us.pyrita.com'],
+      'outboundTag': 'direct',
+    });
+    expect(rules.where((rule) => rule['outboundTag'] == 'blackhole'),
+        hasLength(1));
+    expect(rules.last, {
+      'type': 'field',
+      'ip': ['geoip:private'],
+      'outboundTag': 'direct',
+    });
+  });
 }

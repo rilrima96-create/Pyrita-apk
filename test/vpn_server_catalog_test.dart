@@ -29,6 +29,28 @@ void main() {
     expect(us.unsupportedReason, isNull);
   });
 
+  test('prefers US Hy2 over generic VLESS in server picker', () {
+    const usGenericVless =
+        'vless://12345678-1234-1234-1234-123456789012@us.pyrita.test:443'
+        '?type=ws&security=tls#Pyrita-US';
+    final profiles = buildVpnServerProfiles([usGenericVless, usHy2]);
+    final us = profiles.singleWhere((p) => p.id == 'us');
+
+    expect(us.protocolLabel, 'Hysteria2');
+    expect(us.url, usHy2);
+  });
+
+  test('prefers US Hy2 over US VLESS XHTTP in server picker', () {
+    const usXhttp =
+        'vless://12345678-1234-1234-1234-123456789012@us.pyrita.test:443'
+        '?type=xhttp&security=tls#Pyrita-US-XHTTP';
+    final profiles = buildVpnServerProfiles([usXhttp, usHy2]);
+    final us = profiles.singleWhere((p) => p.id == 'us');
+
+    expect(us.protocolLabel, 'Hysteria2');
+    expect(us.url, usHy2);
+  });
+
   test('filters supported URLs by selected server', () {
     final urls = parseSubscriptionUrls(
       '$fiReality\n$usReality\n$usHy2',

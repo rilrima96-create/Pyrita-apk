@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 /// Pyrita Design System — токены из `pyrita-app-v2/pyrita.css`.
 /// Тёмная warm-mineral палитра + champagne gold. Брендовое ядро.
@@ -143,6 +142,9 @@ class PyDS {
   ];
 
   // ── fonts ─────────────────────────────────────────────────────
+  static const String fontSans = 'Manrope';
+  static const String fontMono = 'JetBrainsMono';
+
   static TextStyle font({
     double? size,
     FontWeight? weight,
@@ -151,22 +153,15 @@ class PyDS {
     double? height,
     bool mono = false,
   }) {
-    return (mono
-            ? GoogleFonts.jetBrainsMono(
-                fontSize: size,
-                fontWeight: weight,
-                color: color,
-                letterSpacing: letterSpacing,
-                height: height,
-              )
-            : GoogleFonts.manrope(
-                fontSize: size,
-                fontWeight: weight,
-                color: color,
-                letterSpacing: letterSpacing,
-                height: height,
-              ))
-        .copyWith(fontFeatures: const [FontFeature.tabularFigures()]);
+    return TextStyle(
+      fontFamily: mono ? fontMono : fontSans,
+      fontSize: size,
+      fontWeight: weight,
+      color: color,
+      letterSpacing: letterSpacing,
+      height: height,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
   }
 }
 
@@ -234,69 +229,69 @@ class PyritaSpacing {
 }
 
 TextTheme _buildTextTheme() {
-  final base = ThemeData.dark().textTheme;
-  return GoogleFonts.manropeTextTheme(base).copyWith(
-    displayLarge: GoogleFonts.manrope(
-      fontSize: 60,
-      fontWeight: FontWeight.w800,
+  final base = ThemeData.dark().textTheme.apply(fontFamily: PyDS.fontSans);
+  return base.copyWith(
+    displayLarge: PyDS.font(
+      size: 60,
+      weight: FontWeight.w800,
       letterSpacing: -1.0,
       height: 1.05,
       color: PyDS.text,
     ),
-    displayMedium: GoogleFonts.manrope(
-      fontSize: 44,
-      fontWeight: FontWeight.w800,
+    displayMedium: PyDS.font(
+      size: 44,
+      weight: FontWeight.w800,
       letterSpacing: -0.8,
       height: 1.06,
       color: PyDS.text,
     ),
-    headlineLarge: GoogleFonts.manrope(
-      fontSize: 32,
-      fontWeight: FontWeight.w800,
+    headlineLarge: PyDS.font(
+      size: 32,
+      weight: FontWeight.w800,
       letterSpacing: -0.5,
       height: 1.1,
       color: PyDS.text,
     ),
-    headlineMedium: GoogleFonts.manrope(
-      fontSize: 26,
-      fontWeight: FontWeight.w800,
+    headlineMedium: PyDS.font(
+      size: 26,
+      weight: FontWeight.w800,
       letterSpacing: -0.65,
       height: 1.15,
       color: PyDS.text,
     ),
-    titleLarge: GoogleFonts.manrope(
-      fontSize: 20,
-      fontWeight: FontWeight.w700,
+    titleLarge: PyDS.font(
+      size: 20,
+      weight: FontWeight.w700,
       height: 1.2,
       color: PyDS.text,
     ),
-    titleMedium: GoogleFonts.manrope(
-      fontSize: 16,
-      fontWeight: FontWeight.w700,
+    titleMedium: PyDS.font(
+      size: 16,
+      weight: FontWeight.w700,
       height: 1.25,
       color: PyDS.text,
     ),
-    bodyLarge: GoogleFonts.manrope(
-      fontSize: 15,
-      fontWeight: FontWeight.w500,
+    bodyLarge: PyDS.font(
+      size: 15,
+      weight: FontWeight.w500,
       height: 1.45,
       color: PyDS.text,
     ),
-    bodyMedium: GoogleFonts.manrope(
-      fontSize: 13,
-      fontWeight: FontWeight.w500,
+    bodyMedium: PyDS.font(
+      size: 13,
+      weight: FontWeight.w500,
       height: 1.45,
       color: PyDS.textSoft,
     ),
-    bodySmall: GoogleFonts.manrope(
-      fontSize: 12,
-      fontWeight: FontWeight.w500,
+    bodySmall: PyDS.font(
+      size: 12,
+      weight: FontWeight.w500,
       height: 1.4,
       color: PyDS.textSoft,
     ),
-    labelSmall: GoogleFonts.manrope(
-      fontSize: 10,
-      fontWeight: FontWeight.w700,
+    labelSmall: PyDS.font(
+      size: 10,
+      weight: FontWeight.w700,
       letterSpacing: 1.4,
       color: PyDS.textFaint,
     ),

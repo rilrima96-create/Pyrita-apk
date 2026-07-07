@@ -70,7 +70,8 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
-            manifestPlaceholders["appLabel"] = "Pyrita QA"
+            // Keep the debug package separate, but show the customer-facing name.
+            manifestPlaceholders["appLabel"] = "Pyrita"
         }
 
         release {
