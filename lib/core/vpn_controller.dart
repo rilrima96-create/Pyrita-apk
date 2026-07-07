@@ -135,6 +135,17 @@ class _BuiltXrayConfig {
 }
 
 @visibleForTesting
+Map<String, dynamic> buildStableVpnDnsConfig() => <String, dynamic>{
+      'queryStrategy': 'UseIPv4',
+      'servers': [
+        '1.1.1.1',
+        '1.0.0.1',
+        '9.9.9.9',
+        '8.8.8.8',
+      ],
+    };
+
+@visibleForTesting
 Map<String, dynamic> buildHysteria2XrayConfigMap(String url) {
   final uri = Uri.tryParse(url);
   if (uri == null || !isHysteria2SubscriptionUrl(url)) {
@@ -237,9 +248,7 @@ Map<String, dynamic> buildHysteria2XrayConfigMap(String url) {
         'settings': {},
       },
     ],
-    'dns': {
-      'servers': ['1.1.1.1', '8.8.8.8'],
-    },
+    'dns': buildStableVpnDnsConfig(),
     'routing': {
       'domainStrategy': 'UseIp',
       'rules': [],
@@ -1291,6 +1300,7 @@ class VpnController extends StateNotifier<PyritaVpnStatus> {
       configMap = jsonDecode(cleanJson) as Map<String, dynamic>;
     }
     stripRemovedXraySettings(configMap);
+    configMap['dns'] = buildStableVpnDnsConfig();
 
     // Поднимаем log level до 'debug' — Xray начнёт писать detail'ы
     // handshake'а (TCP connect, TLS, Reality auth). Это нужно для

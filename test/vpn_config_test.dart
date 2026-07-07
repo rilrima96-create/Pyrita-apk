@@ -47,6 +47,15 @@ void main() {
     expect(jsonEncode(configMap), isNot(contains('allowInsecure')));
   });
 
+  test('stable DNS config avoids Google-only bootstrap', () {
+    final dns = buildStableVpnDnsConfig();
+    final servers = dns['servers'] as List;
+
+    expect(dns['queryStrategy'], 'UseIPv4');
+    expect(servers.take(3), ['1.1.1.1', '1.0.0.1', '9.9.9.9']);
+    expect(servers, contains('8.8.8.8'));
+  });
+
   test('Routing override produces valid JSON', () {
     final parsed = V2ray.parseFromURL(sampleVlessUrl);
     final cleanJson = parsed.getFullConfiguration();

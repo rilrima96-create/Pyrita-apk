@@ -95,6 +95,7 @@ void main() {
     final hysteriaSettings = streamSettings['hysteriaSettings'] as Map;
     final tlsSettings = streamSettings['tlsSettings'] as Map;
     final masks = streamSettings['udpmasks'] as List;
+    final dns = config['dns'] as Map;
 
     expect(outbound['protocol'], 'hysteria');
     expect(settings['address'], 'us.pyrita.test');
@@ -107,5 +108,6 @@ void main() {
       'type': 'salamander',
       'settings': {'password': 'example-obfs'},
     });
+    expect(dns['servers'], containsAll(['1.1.1.1', '1.0.0.1', '9.9.9.9']));
   });
 }
