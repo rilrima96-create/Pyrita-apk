@@ -285,11 +285,12 @@ Map<String, dynamic> buildHttpProxyXrayConfigMap({
   final rules = buildVpnRoutingRules(
     primaryUrl: 'http-proxy://$normalizedHost:$port#$locationId',
     ruDomainsBypass: ruDomainsBypass,
+    blockQuic: false,
   );
   rules.add({
     'type': 'field',
     'network': 'udp',
-    'outboundTag': 'blackhole',
+    'outboundTag': 'direct',
   });
 
   return <String, dynamic>{
@@ -395,6 +396,7 @@ List<String> vpnBootstrapDomainsForUrl(String url) {
 List<Map<String, dynamic>> buildVpnRoutingRules({
   required String primaryUrl,
   required List<String> ruDomainsBypass,
+  bool blockQuic = true,
 }) {
   final bootstrapDomains = vpnBootstrapDomainsForUrl(primaryUrl);
   return <Map<String, dynamic>>[
@@ -410,12 +412,13 @@ List<Map<String, dynamic>> buildVpnRoutingRules({
         'domain': bootstrapDomains,
         'outboundTag': 'direct',
       },
-    {
-      'type': 'field',
-      'network': 'udp',
-      'port': '443',
-      'outboundTag': 'blackhole',
-    },
+    if (blockQuic)
+      {
+        'type': 'field',
+        'network': 'udp',
+        'port': '443',
+        'outboundTag': 'blackhole',
+      },
     {
       'type': 'field',
       'domain': ruDomainsBypass,

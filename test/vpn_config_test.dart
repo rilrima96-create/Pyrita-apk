@@ -132,7 +132,7 @@ void main() {
     });
   });
 
-  test('HTTP proxy edge config routes TCP through proxy and drops UDP', () {
+  test('HTTP proxy edge config routes TCP through proxy and leaves UDP direct', () {
     final config = buildHttpProxyXrayConfigMap(
       host: '162.120.17.14',
       port: 18088,
@@ -166,7 +166,7 @@ void main() {
     expect(rules.last, {
       'type': 'field',
       'network': 'udp',
-      'outboundTag': 'blackhole',
+      'outboundTag': 'direct',
     });
   });
 }
